@@ -15,7 +15,7 @@ function createSupabaseStore(url,key,providedClient){
     for(const link of brandProcesses)brandProc.set(link.brand_id,[...(brandProc.get(link.brand_id)||[]),link]);
     const state={
       pods:pods.map(p=>({id:p.id,name:p.name,lead:p.lead_employee_id})),
-      employees:employees.map(e=>({id:e.id,employeeCode:e.employee_code,name:e.name,email:e.email,podId:e.pod_id,role:e.role,active:e.active,weeklyOffs:e.weekly_offs||[],preferredOffs:e.preferred_offs||[],brandIds:empBrand.get(e.id)||[],processIds:empProcess.get(e.id)||[]})),
+      employees:employees.map(e=>({id:e.id,employeeCode:e.employee_code,name:e.name,email:e.email,podId:e.pod_id,role:e.role,active:e.active,weeklyOffs:e.weekly_offs||[],preferredOffs:e.preferred_offs||[],brandIds:empBrand.get(e.id)||[],primaryBrandIds:employeeBrands.filter(link=>link.employee_id===e.id&&link.is_primary).map(link=>link.brand_id),processIds:empProcess.get(e.id)||[]})),
       brands:brands.map(b=>{const rel=brandProc.get(b.id)||[];return{id:b.id,name:b.name,active:b.active,timezone:b.timezone,operatingDays:b.operating_days,holidayPolicy:b.holiday_policy,minStaff:b.min_staff,dailyMinimums:b.daily_minimums||{},processIds:rel.map(r=>r.process_id),processMinimums:Object.fromEntries(rel.map(r=>[r.process_id,r.min_staff]))}}),
       processes:processes.map(p=>({id:p.id,name:p.name,active:p.active,minStaff:p.min_staff,operatingDays:p.operating_days,holidayPolicy:p.holiday_policy})),
       holidays:holidays.map(h=>({id:h.id,date:h.date,name:h.name,scope:h.scope})),
@@ -35,7 +35,8 @@ function createSupabaseStore(url,key,providedClient){
       const response=await client.from(table).delete().not(table==='employee_brands'?'employee_id':table==='employee_processes'?'employee_id':'brand_id','is',null);
       assert(response);
     }
-    const eb=state.employees.flatMap(e=>e.brandIds.map(brand_id=>({employee_id:e.id,brand_id})));
+    const primaryByEmployee=new Map(state.employees.map(e=>[e.id,new Set(e.primaryBrandIds||[])]));
+    const eb=state.employees.flatMap(e=>e.brandIds.map(brand_id=>({employee_id:e.id,brand_id,is_primary:primaryByEmployee.get(e.id).has(brand_id)})));
     const ep=state.employees.flatMap(e=>e.processIds.map(process_id=>({employee_id:e.id,process_id})));
     const bp=state.brands.flatMap(b=>b.processIds.map(process_id=>({brand_id:b.id,process_id,min_staff:b.processMinimums?.[process_id]||1})));
     await upsert('employee_brands',eb);await upsert('employee_processes',ep);await upsert('brand_processes',bp);

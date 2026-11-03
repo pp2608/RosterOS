@@ -47,6 +47,7 @@ const state = (() => {
   try { return JSON.parse(fs.readFileSync(storePath, 'utf8')); }
   catch { initialStateSource='seed-data';return { ...JSON.parse(JSON.stringify(seed)), rosters: [] }; }
 })();
+for(const employee of state.employees)employee.primaryBrandIds ||= [];
 let remoteStore=null;
 let stateSource=initialStateSource;
 async function persist() {
@@ -94,6 +95,8 @@ function validateRecord(collection,record,exceptId){
     if(unique('employeeCode','Employee ID'))return'Employee ID is already in use.';if(unique('email','Email'))return'Email is already in use.';
     if(!state.pods.some(p=>p.id===record.podId))return'Select an existing pod.';
     if(!Array.isArray(record.brandIds)||record.brandIds.some(b=>!state.brands.some(x=>x.id===b)))return'Employee brand assignments contain an unknown brand.';
+    if(!Array.isArray(record.primaryBrandIds))return'Primary brand ownership must be a list of assigned brands.';
+    if(record.primaryBrandIds.some(b=>!record.brandIds.includes(b)))return'Primary brand ownership must be included in employee brand assignments.';
     if(!Array.isArray(record.processIds)||record.processIds.some(p=>!state.processes.some(x=>x.id===p)))return'Employee process assignments contain an unknown process.';
     if(!Array.isArray(record.weeklyOffs)||record.weeklyOffs.some(d=>!Number.isInteger(d)||d<0||d>6))return'Weekly offs must be weekdays from 0 (Sunday) to 6 (Saturday).';
     if((record.preferredOffs||[]).some(d=>!Number.isInteger(d)||d<0||d>6))return'Preferred days must be weekdays from 0 (Sunday) to 6 (Saturday).';
@@ -140,7 +143,7 @@ for (const collection of collections) {
   app.post(`/api/${collection}`, async (req,res) => {
     const body = req.body || {};
     if (collection === 'holidays' && (!/^\d{4}-\d{2}-\d{2}$/.test(body.date||'') || !body.name?.trim())) return res.status(400).json({ error:'Holiday name and date are required.' });
-    const defaults=collection==='employees'?{brandIds:[],processIds:[],weeklyOffs:[0,6],preferredOffs:[],role:'Operations Associate'}:collection==='brands'?{processIds:[],processMinimums:{},dailyMinimums:{},operatingDays:[1,2,3,4,5],holidayPolicy:'closed',minStaff:1,timezone:'Asia/Kolkata'}:collection==='processes'?{operatingDays:[1,2,3,4,5],holidayPolicy:'closed',minStaff:1}:collection==='pods'?{lead:null}:{};
+    const defaults=collection==='employees'?{brandIds:[],primaryBrandIds:[],processIds:[],weeklyOffs:[0,6],preferredOffs:[],role:'Operations Associate'}:collection==='brands'?{processIds:[],processMinimums:{},dailyMinimums:{},operatingDays:[1,2,3,4,5],holidayPolicy:'closed',minStaff:1,timezone:'Asia/Kolkata'}:collection==='processes'?{operatingDays:[1,2,3,4,5],holidayPolicy:'closed',minStaff:1}:collection==='pods'?{lead:null}:{};
     const record = { active:true, ...defaults, ...body, id:body.id || randomUUID() };
     if(collection==='availability'&&(!record.employeeId||!record.date||!['leave','comp_off'].includes(record.type)||!['pending','approved','rejected'].includes(record.status)))return res.status(400).json({error:'Provide an employee, date, leave or comp-off type, and valid status.'});
     const invalid=validateRecord(collection,record);if(invalid)return res.status(400).json({error:invalid});
@@ -153,6 +156,7 @@ for (const collection of collections) {
     const index = state[collection].findIndex((item) => item.id === req.params.id);
     if (index < 0) return res.status(404).json({ error:`${labels[collection]} not found.` });
     const candidate={ ...state[collection][index], ...req.body, id:req.params.id };
+    if(collection==='employees'&&Array.isArray(req.body.brandIds)&&!Array.isArray(req.body.primaryBrandIds))candidate.primaryBrandIds=(candidate.primaryBrandIds||[]).filter(id=>candidate.brandIds.includes(id));
     const invalid=validateRecord(collection,candidate,req.params.id);if(invalid)return res.status(400).json({error:invalid});
     state[collection][index] = candidate;
     for(const roster of state.rosters) validateRoster(roster,state);

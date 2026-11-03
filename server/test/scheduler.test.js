@@ -17,7 +17,7 @@ test('Scenario 1: one unavailable owner creates an explained gap for every proce
   const processGaps=issues(roster).filter(c=>c.type==='process_coverage_gap');
   assert.equal(processGaps.length,2);
   for(const conflict of processGaps){assert.equal(conflict.severity,'critical');assert.match(conflict.message,/needs 1 distinct staff; 0 assigned/);assert.match(conflict.message,/approved unavailability/);}
-  assert.equal(issues(roster).filter(c=>c.type==='brand_coverage_gap').length,0);
+  assert.equal(issues(roster).filter(c=>c.type==='brand_coverage_gap').length,1);
 });
 
 test('Scenario 2: a three-person, process-split brand preserves coverage when one worker is away',()=>{
@@ -48,7 +48,7 @@ test('Scenario 5: an employee assigned to multiple brands cannot cover both at t
   assert.deepEqual(dayEntries(roster).map(e=>e.brandId),['b1']);
   const gap=issues(roster).find(c=>c.brandId==='b2');
   assert.equal(gap.severity,'critical');
-  assert.match(gap.message,/already assigned to another responsibility/);
+  assert.match(gap.message,/already committed to another brand/);
 });
 
 test('Scarcity-first generation reserves a shared employee for the brand with no alternate',()=>{
@@ -109,7 +109,7 @@ test('Manual assignment to an ineligible employee is revalidated and flagged',()
   const validated=validateRoster(roster,state);
   assert.equal(validated.status,'needs_review');
   assert.equal(validated.conflicts.some(c=>c.type==='scheduling_conflict'&&c.severity==='critical'&&c.employeeId==='e2'),true);
-  assert.equal(validated.conflicts.some(c=>c.type==='process_coverage_gap'&&c.brandId==='b1'),false);
+  assert.equal(validated.conflicts.some(c=>c.type==='process_coverage_gap'&&c.brandId==='b1'),true);
 });
 
 test('Employee weekly offs override a soft preferred-off preference',()=>{
@@ -137,9 +137,9 @@ test('Brand-scoped public holidays obey both brand and process policies',()=>{
   const date='2026-11-01';
   const roster=schedule({employees:[],brands:[brand('closed-brand',['closed-process'],1,[0],'closed'),brand('open-brand',['closed-process'],1,[0],'operate')],processes:[process('closed-process',[0],'closed')],holidays:[{date,name:'Local holiday',scope:'closed-brand'}]});
   assert.equal(issues(roster,date).filter(c=>c.brandId==='closed-brand').length,0);
-  assert.equal(issues(roster,date).filter(c=>c.brandId==='open-brand').length,1);
+  assert.equal(issues(roster,date).filter(c=>c.brandId==='open-brand').length,2);
   const openRoster=schedule({employees:[],brands:[brand('open-brand',['open-process'],1,[0],'operate')],processes:[process('open-process',[0],'operate')],holidays:[{date,name:'Local holiday',scope:'open-brand'}]});
-  assert.equal(issues(openRoster,date).filter(c=>c.type==='process_coverage_gap').length,1);
+  assert.equal(issues(openRoster,date).filter(c=>c.type==='process_coverage_gap'||c.type==='brand_coverage_gap').length,2);
 });
 
 test('Brand minimum adds only staffing above process minimum totals',()=>{
@@ -147,7 +147,7 @@ test('Brand minimum adds only staffing above process minimum totals',()=>{
   assert.equal(dayEntries(roster).length,2);
   assert.equal(issues(roster).length,0);
   const coverage=require('../src/scheduler').calculateCoverage(roster,{employees:[employee('e1',['b1'],['cs']),employee('e2',['b1'],['cs'])],brands:[brand('b1',['cs'],2,[0,1,2,3,4,5,6],'operate',{cs:1})],processes:[process('cs')],holidays:[],availability:[]});
-  assert.deepEqual({fulfilled:coverage.fulfilledSlots,required:coverage.requiredSlots,percentage:coverage.percentage},{fulfilled:60,required:60,percentage:100});
+  assert.deepEqual({fulfilled:coverage.fulfilledSlots,required:coverage.requiredSlots,percentage:coverage.percentage},{fulfilled:90,required:90,percentage:100});
 });
 
 test('Coverage percentage counts fulfilled distinct slots rather than assignment rows',()=>{
@@ -161,7 +161,7 @@ test('Coverage percentage counts fulfilled distinct slots rather than assignment
     {date:`2026-11-${day}`,brandId:'b1',processId:'cs',employeeId:'e1'},
   ]);
   const coverage=calculateCoverage({month:'2026-11',entries},{employees:[employeeA,employeeB],brands:[brandData],processes:[processData],holidays:[],availability:[]});
-  assert.deepEqual({fulfilled:coverage.fulfilledSlots,required:coverage.requiredSlots,percentage:coverage.percentage},{fulfilled:5,required:10,percentage:50});
+  assert.deepEqual({fulfilled:coverage.fulfilledSlots,required:coverage.requiredSlots,percentage:coverage.percentage},{fulfilled:10,required:15,percentage:67});
 });
 
 test('Coverage matching avoids greedy undercount when one employee is assigned to multiple eligible processes',()=>{
@@ -193,7 +193,7 @@ test('Coverage matching avoids greedy undercount when one employee is assigned t
 
   const coverage=calculateCoverage(roster,state);
   assert.equal(oldFulfilled,5);
-  assert.deepEqual({fulfilled:coverage.fulfilledSlots,required:coverage.requiredSlots,percentage:coverage.percentage},{fulfilled:10,required:10,percentage:100});
+  assert.deepEqual({fulfilled:coverage.fulfilledSlots,required:coverage.requiredSlots,percentage:coverage.percentage},{fulfilled:15,required:15,percentage:100});
 });
 
 test('Brand extra slots can be matched to an eligible assignment on any operating process',()=>{
@@ -207,7 +207,7 @@ test('Brand extra slots can be matched to an eligible assignment on any operatin
     {date:onDate,brandId:'b1',processId:'retention',employeeId:'e3'},
   ]);
   const coverage=calculateCoverage({month:'2026-11',entries},{employees,brands:[brandData],processes:processData,holidays:[],availability:[]});
-  assert.deepEqual({fulfilled:coverage.fulfilledSlots,required:coverage.requiredSlots,percentage:coverage.percentage},{fulfilled:15,required:15,percentage:100});
+  assert.deepEqual({fulfilled:coverage.fulfilledSlots,required:coverage.requiredSlots,percentage:coverage.percentage},{fulfilled:25,required:25,percentage:100});
 });
 
 test('Coverage matching lets one employee satisfy at most one slot across brands per day',()=>{
@@ -215,7 +215,7 @@ test('Coverage matching lets one employee satisfy at most one slot across brands
   const brands=[brand('b1',['cs'],1,[1]),brand('b2',['cs'],1,[1])];
   const entries=brands.map(b=>({date,brandId:b.id,processId:'cs',employeeId:'e1'}));
   const coverage=calculateCoverage({month:'2026-11',entries},{employees:[person],brands,processes:[process('cs',[1])],holidays:[],availability:[]});
-  assert.deepEqual({fulfilled:coverage.fulfilledSlots,required:coverage.requiredSlots},{fulfilled:1,required:10});
+  assert.deepEqual({fulfilled:coverage.fulfilledSlots,required:coverage.requiredSlots},{fulfilled:0,required:20});
 });
 
 test('Coverage matching still excludes assignments blocked by eligibility, calendars, weekly offs, or approved leave',()=>{
@@ -230,17 +230,58 @@ test('Coverage matching still excludes assignments blocked by eligibility, calen
   assert.equal(coverageFor({employees:[{...person,weeklyOffs:[],processIds:[]}]}).fulfilledSlots,0);
 });
 
-test('One employee cannot be scheduled across two processes on the same brand and day',()=>{
+test('One employee may cover multiple processes on the same brand and day',()=>{
   const roster=schedule({employees:[employee('e1',['b1'],['cs','retention'])],brands:[brand('b1',['cs','retention'])],processes:[process('cs'),process('retention')]});
-  assert.equal(dayEntries(roster).length,1);
-  assert.equal(issues(roster).filter(c=>c.type==='process_coverage_gap').length,1);
+  assert.equal(dayEntries(roster).length,2);
+  assert.equal(issues(roster).filter(c=>c.type==='process_coverage_gap').length,0);
+  assert.equal(issues(roster).filter(c=>c.type==='brand_coverage_gap').length,0);
+  assert.equal(calculateCoverage(roster,{employees:[employee('e1',['b1'],['cs','retention'])],brands:[brand('b1',['cs','retention'])],processes:[process('cs'),process('retention')],holidays:[],availability:[]}).brandFulfilledEmployees,30);
 });
 
-test('Validation rejects duplicate same-day process coverage by one employee',()=>{
+test('Validation accepts same-brand multi-process work and rejects duplicate same-process assignments',()=>{
   const state={employees:[employee('e1',['b1'],['cs','retention'])],brands:[brand('b1',['cs','retention'])],processes:[process('cs'),process('retention')],holidays:[],availability:[]};
   const roster={id:'test',month:'2026-11',entries:[{id:'a',date,brandId:'b1',processId:'cs',employeeId:'e1'},{id:'b',date,brandId:'b1',processId:'retention',employeeId:'e1'}],conflicts:[]};
   validateRoster(roster,state);
-  assert.equal(roster.conflicts.some(c=>c.type==='scheduling_conflict'&&c.message.includes('incompatible assignments')),true);
+  assert.equal(roster.conflicts.some(c=>c.type==='scheduling_conflict'),false);
+  roster.entries.push({id:'c',date,brandId:'b1',processId:'cs',employeeId:'e1'});
+  validateRoster(roster,state);
+  assert.equal(roster.conflicts.some(c=>c.id==='duplicate:c'),true);
+});
+
+test('48-person sample preserves the approved ownership and relief fixture',()=>{
+  const sample=require('../src/data');
+  assert.equal(sample.employees.length,48);
+  assert.equal(sample.brands.length,24);
+  assert.equal(sample.employees.filter(employee=>employee.primaryBrandIds.length>0).length,30);
+  assert.equal(sample.employees.filter(employee=>employee.reliefGroup).length,18);
+  assert.equal(sample.brands.filter(brand=>sample.employees.filter(employee=>employee.primaryBrandIds.includes(brand.id)).length===1).length,19);
+  assert.equal(sample.employees.find(employee=>employee.name==='Relief Associate 9').brandIds.length,16);
+});
+
+test('Brand coverage counts a same-brand multi-process employee once toward distinct headcount',()=>{
+  const person=employee('e1',['b1'],['cs','retention']);
+  const brandData=brand('b1',['cs','retention'],2);
+  const roster={month:'2026-11',entries:[
+    {id:'cs',date,brandId:'b1',processId:'cs',employeeId:'e1'},
+    {id:'retention',date,brandId:'b1',processId:'retention',employeeId:'e1'},
+  ]};
+  const coverage=calculateCoverage(roster,{employees:[person],brands:[brandData],processes:[process('cs'),process('retention')],holidays:[],availability:[]});
+  assert.equal(coverage.processFulfilledSlots,2);
+  assert.equal(coverage.brandFulfilledEmployees,1);
+  const evaluated=validateRoster(roster,{employees:[person],brands:[brandData],processes:[process('cs'),process('retention')],holidays:[],availability:[]});
+  assert.equal(evaluated.conflicts.some(conflict=>conflict.type==='brand_coverage_gap'&&conflict.required===2&&conflict.assigned===1),true);
+});
+
+test('Cross-brand same-day validation rejects every colliding assignment and excludes them from coverage',()=>{
+  const person=employee('shared',['b1','b2'],['cs']);
+  const state={employees:[person],brands:[brand('b1',['cs']),brand('b2',['cs'])],processes:[process('cs')],holidays:[],availability:[]};
+  const roster={month:'2026-11',entries:[
+    {id:'one',date,brandId:'b1',processId:'cs',employeeId:'shared'},
+    {id:'two',date,brandId:'b2',processId:'cs',employeeId:'shared'},
+  ]};
+  const validated=validateRoster(roster,state);
+  assert.equal(validated.conflicts.filter(conflict=>conflict.type==='scheduling_conflict'&&conflict.date===date).length,2);
+  assert.equal(calculateCoverage(roster,state).fulfilledSlots,0);
 });
 
 test('Validation flags manual assignment on leave, weekly off, or a closed calendar',()=>{

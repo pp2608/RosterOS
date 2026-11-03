@@ -34,8 +34,10 @@ create table if not exists brands (
 );
 create table if not exists employee_brands (
   employee_id uuid not null references employees(id) on delete cascade,
-  brand_id uuid not null references brands(id) on delete cascade, primary key(employee_id, brand_id)
+  brand_id uuid not null references brands(id) on delete cascade,
+  is_primary boolean not null default false, primary key(employee_id, brand_id)
 );
+alter table employee_brands add column if not exists is_primary boolean not null default false;
 create table if not exists brand_processes (
   brand_id uuid not null references brands(id) on delete cascade,
   process_id uuid not null references processes(id) on delete cascade,

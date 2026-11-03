@@ -29,15 +29,17 @@ test('authentication protects workforce reads and every roster write route',asyn
   const edit=await call('/rosters/2026-11/entries/test-entry',{method:'PATCH',auth:false,body:JSON.stringify({employeeId:'test'})});assert.equal(edit.response.status,401);
   const validate=await call('/rosters/2026-11/validate',{method:'POST',auth:false,body:'{}'});assert.equal(validate.response.status,401);
   const exportCsv=await call('/rosters/2026-11/export.csv',{auth:false});assert.equal(exportCsv.response.status,401);
-  const authorized=await call('/bootstrap');assert.equal(authorized.response.status,200);assert.equal(authorized.data.employees.length,32);
+  const authorized=await call('/bootstrap');assert.equal(authorized.response.status,200);assert.equal(authorized.data.employees.length,48);
 });
 
 test('API bootstrap, employee, brand and process management persists locally',async()=>{
-  let result=await call('/bootstrap');assert.equal(result.response.status,200);assert.equal(result.data.employees.length,32);assert.equal(result.data.brands.length,24);assert.equal(result.data.processes.length,4);assert.equal(result.data.pods.length,5);
-  const resources=result.data.brands.map(b=>result.data.employees.filter(e=>e.brandIds.includes(b.id)).length);assert.equal(resources.filter(count=>count===1).length,19);assert.equal(resources.filter(count=>count===2||count===3).length,5);assert.equal(resources.every(count=>count>=1&&count<=3),true);
+  let result=await call('/bootstrap');assert.equal(result.response.status,200);assert.equal(result.data.employees.length,48);assert.equal(result.data.brands.length,24);assert.equal(result.data.processes.length,4);assert.equal(result.data.pods.length,5);
+  const resources=result.data.brands.map(b=>result.data.employees.filter(e=>e.primaryBrandIds.includes(b.id)).length);assert.equal(resources.filter(count=>count===1).length,19);assert.equal(resources.filter(count=>count===2).length,4);assert.equal(resources.filter(count=>count===3).length,1);assert.equal(resources.every(count=>count>=1&&count<=3),true);
+  const relief=result.data.employees.filter(e=>e.reliefGroup);assert.equal(relief.length,18);assert.equal(result.data.employees.find(e=>e.name==='Relief Associate 9').brandIds.length,16);
   const createdProcess=(await call('/processes',{method:'POST',body:JSON.stringify({name:'API Test Process',active:true,operatingDays:[1,2,3,4,5,6,0],holidayPolicy:'operate',minStaff:1})}));assert.equal(createdProcess.response.status,201);
   const brand=(await call('/brands',{method:'POST',body:JSON.stringify({name:'API Test Brand',active:true,operatingDays:[1,2,3,4,5,6,0],holidayPolicy:'operate',processIds:[createdProcess.data.id],processMinimums:{[createdProcess.data.id]:1},dailyMinimums:{},minStaff:1})}));assert.equal(brand.response.status,201);
-  const employee=(await call('/employees',{method:'POST',body:JSON.stringify({employeeCode:'API-001',name:'Demo Employee',email:'api-demo@example.test',podId:result.data.pods[0].id,role:'Operations Associate',active:true,brandIds:[brand.data.id],processIds:[createdProcess.data.id],weeklyOffs:[],preferredOffs:[]})}));assert.equal(employee.response.status,201);
+  const employee=(await call('/employees',{method:'POST',body:JSON.stringify({employeeCode:'API-001',name:'Demo Employee',email:'api-demo@example.test',podId:result.data.pods[0].id,role:'Operations Associate',active:true,brandIds:[brand.data.id],primaryBrandIds:[brand.data.id],processIds:[createdProcess.data.id],weeklyOffs:[],preferredOffs:[]})}));assert.equal(employee.response.status,201);
+  const invalidPrimary=await call('/employees',{method:'POST',body:JSON.stringify({employeeCode:'API-002',name:'Invalid Primary',email:'invalid-primary@example.test',podId:result.data.pods[0].id,brandIds:[],primaryBrandIds:[brand.data.id],processIds:[],weeklyOffs:[]})});assert.equal(invalidPrimary.response.status,400);
   const changed=await call(`/employees/${employee.data.id}`,{method:'PATCH',body:JSON.stringify({name:'Updated Demo Employee'})});assert.equal(changed.data.name,'Updated Demo Employee');
   assert.equal(fs.existsSync(process.env.ROSTEROS_STORE_PATH),true);
   const persisted=JSON.parse(fs.readFileSync(process.env.ROSTEROS_STORE_PATH,'utf8'));
@@ -57,7 +59,7 @@ test('availability changes, roster generation, manual edit, validation and CSV e
   const rejected=await call(`/rosters/2026-11/entries/${encodeURIComponent(entry.id)}`,{method:'PATCH',body:JSON.stringify({employeeId:other.id})});assert.equal(rejected.response.status,409);
   const afterRejected=(await call('/rosters/2026-11')).data;assert.equal(afterRejected.entries.find(e=>e.id===entry.id).employeeId,employee.id);
   const edited=await call(`/rosters/2026-11/entries/${encodeURIComponent(entry.id)}`,{method:'PATCH',body:JSON.stringify({employeeId:employee.id})});assert.equal(edited.response.status,200);assert.equal(edited.data.entries.find(e=>e.id===entry.id).source,'manual');
-  assert.ok(edited.data.coverage.requiredSlots>0);assert.match(edited.data.coverage.explanation,/Fulfilled distinct staffing slots/);
+  assert.ok(edited.data.coverage.requiredSlots>0);assert.match(edited.data.coverage.explanation,/Coverage combines process responsibility/);
   const validated=await call('/rosters/2026-11/validate',{method:'POST',body:'{}'});assert.equal(validated.response.status,200);assert.ok(validated.data.validatedAt);
   const csv=await call('/rosters/2026-11/export.csv');assert.equal(csv.response.status,200);assert.match(csv.data,/Date,Brand,Process,Employee,Source/);assert.match(csv.data,/API Test Brand/);
 });

@@ -1,15 +1,15 @@
-const dayKey = (date) => new Date(`${date}T00:00:00Z`).getUTCDay();
+const dayKey = (date) => new Date(date + 'T00:00:00Z').getUTCDay();
 const monthDates = (month) => {
   const [year, m] = month.split('-').map(Number);
   const days = new Date(Date.UTC(year, m, 0)).getUTCDate();
-  return Array.from({ length: days }, (_, i) => `${month}-${String(i + 1).padStart(2, '0')}`);
+  return Array.from({ length: days }, (_, i) => month + '-' + String(i + 1).padStart(2, '0'));
 };
 const minimum = (value) => Math.max(1, Number(value) || 1);
 const processRequired = (brand, process) => minimum(brand.processMinimums?.[process.id] || process.minStaff);
 const brandRequired = (brand, day) => minimum(brand.dailyMinimums?.[day] || brand.minStaff);
-const holidayFor = (holidays, date, brand) => holidays.find((h) => h.date === date && (h.scope === 'all' || h.scope === brand.id));
+const holidayFor = (holidays, date, brand) => holidays.some((h) => h.date === date && (h.scope === 'all' || h.scope === brand.id));
 const employeeEligible = (employee, brand, process) => Boolean(employee?.active && employee.brandIds?.includes(brand.id) && employee.processIds?.includes(process.id));
-const employeeAvailable = (employee, date, day, approvedAway) => Boolean(employee && !employee.weeklyOffs?.includes(day) && !approvedAway.has(`${employee.id}:${date}`));
+const employeeAvailable = (employee, date, day, approvedAway) => Boolean(employee && !employee.weeklyOffs?.includes(day) && !approvedAway.has(employee.id + ':' + date));
 
 function operatingProcesses(brand, weekday, holiday, processById) {
   if (!brand?.active || !brand.operatingDays?.includes(weekday) || (holiday && brand.holidayPolicy !== 'operate')) return [];
@@ -17,297 +17,447 @@ function operatingProcesses(brand, weekday, holiday, processById) {
 }
 
 function approvedAwaySet(availability) {
-  return new Set(availability.filter((item) => item.status === 'approved').map((item) => `${item.employeeId}:${item.date}`));
+  return new Set(availability.filter((item) => item.status === 'approved').map((item) => item.employeeId + ':' + item.date));
 }
 
-// Requirements are derived once per operating date. Process minimums are the base
-// demand; a higher brand minimum adds only the difference as distinct brand slots.
 function requirementsFor(brand, processes, weekday) {
-  const slots = processes.flatMap((process) => Array.from({ length: processRequired(brand, process) }, (_, index) => ({ process, index, brandExtra: false })));
-  const brandExtra = Math.max(0, brandRequired(brand, weekday) - slots.length);
-  for (let i = 0; i < brandExtra; i += 1) slots.push({ process: processes[0], index: i, brandExtra: true });
-  return { slots, brandExtra };
+  const processRequirements = processes.map((process) => ({ process, required: processRequired(brand, process) }));
+  return {
+    processes: processRequirements,
+    brandRequired: brandRequired(brand, weekday),
+    requiredProcessSlots: processRequirements.reduce((sum, item) => sum + item.required, 0),
+  };
 }
 
-function calculateCoverage(roster, { employees, brands, processes, holidays, availability }) {
+function inspectEntries(roster, state) {
+  const { employees, brands, processes, holidays, availability } = state;
   const processById = new Map(processes.map((p) => [p.id, p]));
   const employeeById = new Map(employees.map((e) => [e.id, e]));
+  const brandById = new Map(brands.map((b) => [b.id, b]));
   const approvedAway = approvedAwaySet(availability);
-  const entriesByDate = new Map();
+  const invalid = new Set();
+  const conflicts = [];
+  const conflictIds = new Set();
+  const byDateEmployee = new Map();
+  const add = (conflict) => {
+    if (!conflictIds.has(conflict.id)) {
+      conflictIds.add(conflict.id);
+      conflicts.push(conflict);
+    }
+  };
+  const assignmentConflict = (entry, type, message) => {
+    invalid.add(entry);
+    add({
+      id: type + ':' + entry.id,
+      entryId: entry.id,
+      type: type === 'calendar_conflict' ? type : 'scheduling_conflict',
+      severity: 'critical',
+      date: entry.date,
+      brandId: entry.brandId,
+      processId: entry.processId,
+      employeeId: entry.employeeId,
+      message,
+    });
+  };
+
   for (const entry of roster.entries) {
-    const list = entriesByDate.get(entry.date) || [];
-    list.push(entry);
-    entriesByDate.set(entry.date, list);
+    const employee = employeeById.get(entry.employeeId);
+    const brand = brandById.get(entry.brandId);
+    const process = processById.get(entry.processId);
+    const weekday = dayKey(entry.date);
+    const calendarValid = Boolean(brand && process
+      && operatingProcesses(brand, weekday, holidayFor(holidays, entry.date, brand), processById).some((p) => p.id === process.id));
+
+    if (!employeeEligible(employee, brand || {}, process || {}) || !brand?.active || !process?.active) {
+      assignmentConflict(entry, 'eligibility', 'Assigned employee is inactive or is not assigned to this brand and process.');
+    }
+    if (employee?.weeklyOffs?.includes(weekday)) {
+      assignmentConflict(entry, 'off', 'Assignment falls on the employee’s mandatory weekly off.');
+    }
+    if (approvedAway.has(entry.employeeId + ':' + entry.date)) {
+      assignmentConflict(entry, 'away', 'Assignment overlaps approved leave or comp-off.');
+    }
+    if (!calendarValid) {
+      assignmentConflict(entry, 'calendar_conflict', 'Assignment does not match the brand and process operating calendars.');
+    }
+
+    const key = entry.date + ':' + entry.employeeId;
+    const group = byDateEmployee.get(key) || [];
+    group.push(entry);
+    byDateEmployee.set(key, group);
   }
-  let requiredSlots = 0;
-  let fulfilledSlots = 0;
+
+  for (const group of byDateEmployee.values()) {
+    const brandIds = new Set(group.map((entry) => entry.brandId));
+    if (brandIds.size > 1) {
+      for (const entry of group) {
+        invalid.add(entry);
+        add({
+          id: 'overlap:' + entry.id,
+          entryId: entry.id,
+          type: 'scheduling_conflict',
+          severity: 'critical',
+          date: entry.date,
+          brandId: entry.brandId,
+          processId: entry.processId,
+          employeeId: entry.employeeId,
+          message: 'Employee has assignments to conflicting brands on ' + entry.date + '.',
+        });
+      }
+      continue;
+    }
+
+    const firstByProcess = new Map();
+    for (const entry of group) {
+      const prior = firstByProcess.get(entry.processId);
+      if (prior) {
+        invalid.add(entry);
+        add({
+          id: 'duplicate:' + entry.id,
+          entryId: entry.id,
+          type: 'scheduling_conflict',
+          severity: 'critical',
+          date: entry.date,
+          brandId: entry.brandId,
+          processId: entry.processId,
+          employeeId: entry.employeeId,
+          message: 'Employee has a duplicate assignment to the same process on ' + entry.date + '.',
+        });
+      } else {
+        firstByProcess.set(entry.processId, entry);
+      }
+    }
+  }
+
+  return { validEntries: roster.entries.filter((entry) => !invalid.has(entry)), conflicts };
+}
+
+function evaluateRoster(roster, state) {
+  const { employees, brands, processes, holidays, availability } = state;
+  const processById = new Map(processes.map((p) => [p.id, p]));
+  const employeeById = new Map(employees.map((e) => [e.id, e]));
+  const inspected = inspectEntries(roster, state);
+  const conflicts = inspected.conflicts;
+  const add = (conflict) => {
+    if (!conflicts.some((item) => item.id === conflict.id)) conflicts.push(conflict);
+  };
+  let processFulfilledSlots = 0;
+  let processRequiredSlots = 0;
+  let brandFulfilledEmployees = 0;
+  let brandRequiredEmployees = 0;
+
   for (const date of monthDates(roster.month)) {
     const weekday = dayKey(date);
-    const slots = [];
-    const dateEntries = entriesByDate.get(date) || [];
-    for (const brand of brands.filter((b) => b.active)) {
+    const dateEntries = inspected.validEntries.filter((entry) => entry.date === date);
+    for (const brand of brands.filter((item) => item.active)) {
       const operating = operatingProcesses(brand, weekday, holidayFor(holidays, date, brand), processById);
       if (!operating.length) continue;
       const requirements = requirementsFor(brand, operating, weekday);
-      const brandEntries = dateEntries.filter((entry) => entry.brandId === brand.id);
-      for (const slot of requirements.slots.filter((item) => !item.brandExtra)) {
-        slots.push({
-          candidates: [...new Set(brandEntries
-            .filter((entry) => entry.processId === slot.process.id)
-            .filter((entry) => {
-              const person = employeeById.get(entry.employeeId);
-              return employeeEligible(person, brand, slot.process) && employeeAvailable(person, date, weekday, approvedAway);
-            })
-            .map((entry) => entry.employeeId))],
-        });
+      const entries = dateEntries.filter((entry) => entry.brandId === brand.id);
+      const assignedByProcess = new Map(operating.map((process) => [process.id, new Set()]));
+      const assignedToBrand = new Set();
+
+      for (const entry of entries) {
+        const employee = employeeById.get(entry.employeeId);
+        if (!employeeEligible(employee, brand, processById.get(entry.processId))) continue;
+        assignedByProcess.get(entry.processId)?.add(employee.id);
+        assignedToBrand.add(employee.id);
       }
-      // Brand-level minimums are additional slots across operating processes.
-      // Let matching choose the assignment that best preserves process coverage.
-      for (let i = 0; i < requirements.brandExtra; i += 1) {
-        slots.push({
-          candidates: [...new Set(brandEntries
-            .filter((entry) => operating.some((process) => process.id === entry.processId))
-            .filter((entry) => {
-              const person = employeeById.get(entry.employeeId);
-              const assignedProcess = processById.get(entry.processId);
-              return employeeEligible(person, brand, assignedProcess) && employeeAvailable(person, date, weekday, approvedAway);
-            })
-            .map((entry) => entry.employeeId))],
+
+      for (const { process, required } of requirements.processes) {
+        const assigned = assignedByProcess.get(process.id).size;
+        processRequiredSlots += required;
+        processFulfilledSlots += Math.min(assigned, required);
+        if (assigned < required) {
+          add({
+            id: 'process-gap:' + date + ':' + brand.id + ':' + process.id,
+            type: 'process_coverage_gap',
+            severity: 'critical',
+            date,
+            brandId: brand.id,
+            processId: process.id,
+            required,
+            assigned,
+            message: brand.name + ' · ' + process.name + ' requires ' + required + ' distinct staff; ' + assigned + ' valid and available.',
+          });
+        }
+      }
+
+      brandRequiredEmployees += requirements.brandRequired;
+      brandFulfilledEmployees += Math.min(assignedToBrand.size, requirements.brandRequired);
+      if (assignedToBrand.size < requirements.brandRequired) {
+        add({
+          id: 'brand-gap:' + date + ':' + brand.id,
+          type: 'brand_coverage_gap',
+          severity: 'critical',
+          date,
+          brandId: brand.id,
+          required: requirements.brandRequired,
+          assigned: assignedToBrand.size,
+          message: brand.name + ' requires ' + requirements.brandRequired + ' distinct staff across its operating processes; ' + assignedToBrand.size + ' valid and available.',
         });
       }
     }
-    requiredSlots += slots.length;
-    fulfilledSlots += maximumSlotMatching(slots);
   }
-  return { fulfilledSlots, requiredSlots, percentage: requiredSlots ? Math.round(fulfilledSlots / requiredSlots * 100) : 100, explanation: 'Fulfilled distinct staffing slots divided by required process slots plus any additional brand minimum slots.' };
+
+  const employeeByIdForPreferences = new Map(employees.map((employee) => [employee.id, employee]));
+  for (const entry of inspected.validEntries) {
+    const employee = employeeByIdForPreferences.get(entry.employeeId);
+    if (employee?.preferredOffs?.includes(dayKey(entry.date)) && !employee.weeklyOffs?.includes(dayKey(entry.date))) {
+      add({
+        id: 'preference:' + entry.id,
+        type: 'preference_conflict',
+        severity: 'warning',
+        date: entry.date,
+        brandId: entry.brandId,
+        processId: entry.processId,
+        employeeId: entry.employeeId,
+        message: employee.name + ' is assigned on a preferred day off. Coverage takes priority; consider a voluntary swap if possible.',
+      });
+    }
+  }
+
+  const requiredSlots = processRequiredSlots + brandRequiredEmployees;
+  const fulfilledSlots = processFulfilledSlots + brandFulfilledEmployees;
+  return {
+    conflicts,
+    status: conflicts.some((item) => item.severity === 'critical') ? 'needs_review' : 'validated',
+    coverage: {
+      fulfilledSlots,
+      requiredSlots,
+      percentage: requiredSlots ? (fulfilledSlots === requiredSlots ? 100 : Math.min(99, Math.round((fulfilledSlots / requiredSlots) * 100))) : 100,
+      processFulfilledSlots,
+      processRequiredSlots,
+      brandFulfilledEmployees,
+      brandRequiredEmployees,
+      explanation: 'Coverage combines process responsibility positions and distinct brand staffing requirements. One employee may cover multiple processes within a brand but counts once toward that brand’s minimum.',
+    },
+  };
 }
 
-function maximumSlotMatching(slots) {
-  const employeeToSlot = new Map();
-  const assign = (slotIndex, visitedEmployees) => {
-    for (const employeeId of slots[slotIndex].candidates) {
-      if (visitedEmployees.has(employeeId)) continue;
-      visitedEmployees.add(employeeId);
-      const priorSlot = employeeToSlot.get(employeeId);
-      if (priorSlot === undefined || assign(priorSlot, visitedEmployees)) {
-        employeeToSlot.set(employeeId, slotIndex);
-        return true;
-      }
-    }
-    return false;
-  };
-  for (let slotIndex = 0; slotIndex < slots.length; slotIndex += 1) assign(slotIndex, new Set());
-  return employeeToSlot.size;
+function calculateCoverage(roster, state) {
+  return evaluateRoster(roster, state).coverage;
 }
 
 function allocateDailySlots(slots) {
-  const employeeToAssignment = new Map();
-  const assign = (slotIndex, visitedEmployees) => {
-    for (const option of slots[slotIndex].options) {
+  const employeeBrand = new Map();
+  const employeeProcesses = new Map();
+  const brandEmployees = new Map();
+  const assignments = [];
+
+  for (let slotIndex = 0; slotIndex < slots.length; slotIndex += 1) {
+    const slot = slots[slotIndex];
+
+    for (const option of slot.options) {
       const employeeId = option.employee.id;
-      if (visitedEmployees.has(employeeId)) continue;
-      visitedEmployees.add(employeeId);
-      const previous = employeeToAssignment.get(employeeId);
-      if (!previous || assign(previous.slotIndex, visitedEmployees)) {
-        employeeToAssignment.set(employeeId, { slotIndex, option });
-        return true;
-      }
+      const process = slot.process || option.process;
+      const processKey = slot.brand.id + ':' + process.id;
+      const assignedToProcess = employeeProcesses.get(processKey) || new Set();
+      const assignedBrand = employeeBrand.get(employeeId);
+      if (assignedBrand && assignedBrand !== slot.brand.id) continue;
+      if (assignedToProcess.has(employeeId)) continue;
+      const assignedToBrand = brandEmployees.get(slot.brand.id) || new Set();
+      const mustIncreaseDistinct = assignedToBrand.size < slot.brandRequired;
+      if (mustIncreaseDistinct && assignedBrand === slot.brand.id) continue;
+      employeeBrand.set(employeeId, slot.brand.id);
+      assignedToProcess.add(employeeId);
+      employeeProcesses.set(processKey, assignedToProcess);
+      assignedToBrand.add(employeeId);
+      brandEmployees.set(slot.brand.id, assignedToBrand);
+      assignments.push({ slotIndex, option });
+      break;
     }
-    return false;
-  };
-  for (let slotIndex = 0; slotIndex < slots.length; slotIndex += 1) assign(slotIndex, new Set());
-  return employeeToAssignment;
+  }
+  return { assignments, employeeBrand };
 }
 
 function generateRoster({ month, employees, brands, processes, holidays, availability }) {
   if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) throw new Error('Month must use YYYY-MM format.');
-  const activeEmployees = employees.filter((e) => e.active);
-  const activeBrands = brands.filter((b) => b.active);
-  const processById = new Map(processes.map((p) => [p.id, p]));
+  const activeEmployees = employees.filter((employee) => employee.active);
+  const activeBrands = brands.filter((brand) => brand.active);
+  const processById = new Map(processes.map((process) => [process.id, process]));
+  const approvedAway = approvedAwaySet(availability);
   const entries = [];
   const conflicts = [];
-  const approvedAway = approvedAwaySet(availability);
+
   for (const date of monthDates(month)) {
     const weekday = dayKey(date);
     const dailySlots = [];
-    const demands = new Map();
+    const demands = [];
+    const eligibleBrandOptions = new Map();
+
     for (const brand of activeBrands) {
       const operating = operatingProcesses(brand, weekday, holidayFor(holidays, date, brand), processById);
       if (!operating.length) continue;
       const requirements = requirementsFor(brand, operating, weekday);
-      const eligible = new Map();
-      const available = new Map();
-      const processSlots = requirements.slots.filter((slot) => !slot.brandExtra);
-      for (const process of operating) {
-        const people = activeEmployees.filter((person) => employeeEligible(person, brand, process));
-        eligible.set(process.id, people);
-        available.set(process.id, people.filter((person) => employeeAvailable(person, date, weekday, approvedAway)));
-        for (let index = 0; index < processRequired(brand, process); index += 1) {
-          dailySlots.push({
-            kind: 'process', brand, process, index,
-            options: available.get(process.id).map((person) => ({ employee: person, process })),
-          });
+      const availableByProcess = new Map();
+      for (const { process, required } of requirements.processes) {
+        const eligible = activeEmployees.filter((employee) => employeeEligible(employee, brand, process));
+        const available = eligible.filter((employee) => employeeAvailable(employee, date, weekday, approvedAway));
+        availableByProcess.set(process.id, { eligible, available, required });
+        const candidates = available.map((employee) => ({ employee, process }));
+        for (const employee of available) {
+          const choices = eligibleBrandOptions.get(employee.id) || new Set();
+          choices.add(brand.id);
+          eligibleBrandOptions.set(employee.id, choices);
+        }
+        for (let index = 0; index < required; index += 1) {
+          dailySlots.push({ brand, process, index, brandRequired: requirements.brandRequired, options: candidates });
         }
       }
-      for (let index = 0; index < requirements.brandExtra; index += 1) {
-        const options = operating.flatMap((process) => available.get(process.id).map((person) => ({ employee: person, process })));
-        dailySlots.push({ kind: 'brandExtra', brand, process: null, index, options });
+      const extraCount = Math.max(0, requirements.brandRequired - requirements.requiredProcessSlots);
+      if (extraCount) {
+        const candidates = operating.flatMap((process) => availableByProcess.get(process.id).available.map((employee) => ({ employee, process })));
+        for (let index = 0; index < extraCount; index += 1) {
+          dailySlots.push({ brand, process: null, index, extra: true, brandRequired: requirements.brandRequired, options: candidates });
+        }
       }
-      demands.set(brand.id, { brand, operating, processSlots, eligible, available, brandExtra: requirements.brandExtra });
+      demands.push({ brand, operating, requirements, availableByProcess });
     }
 
-    // Count each employee's distinct eligible brand/process options for this day.
-    const employeeOptions = new Map();
-    const processPoolSizes = new Map();
-    for (const slot of dailySlots) {
-      const pool = new Set(slot.options.map((option) => option.employee.id));
-      if (slot.kind === 'process') processPoolSizes.set(`${slot.brand.id}:${slot.process.id}`, pool.size);
-      for (const option of slot.options) {
-        const key = `${slot.brand.id}:${option.process.id}`;
-        const choices = employeeOptions.get(option.employee.id) || new Set();
-        choices.add(key);
-        employeeOptions.set(option.employee.id, choices);
-      }
-    }
-    const compareEmployees = (a, b) => (employeeOptions.get(a.employee.id)?.size || 0) - (employeeOptions.get(b.employee.id)?.size || 0)
-      || Number((a.employee.preferredOffs || []).includes(weekday)) - Number((b.employee.preferredOffs || []).includes(weekday))
-      || a.employee.id.localeCompare(b.employee.id);
-    for (const slot of dailySlots) {
-      slot.options.sort((a, b) => compareEmployees(a, b)
-        || (processPoolSizes.get(`${slot.brand.id}:${a.process.id}`) || 0) - (processPoolSizes.get(`${slot.brand.id}:${b.process.id}`) || 0)
-        || a.process.id.localeCompare(b.process.id));
-    }
+    const compareOptions = (a, b) => (eligibleBrandOptions.get(a.employee?.id)?.size || 0) - (eligibleBrandOptions.get(b.employee?.id)?.size || 0)
+      || Number((a.employee?.preferredOffs || []).includes(weekday)) - Number((b.employee?.preferredOffs || []).includes(weekday))
+      || String(a.employee?.id || '').localeCompare(String(b.employee?.id || ''));
 
-    // Fill process minimums first, ordered by the size of their eligible pools;
-    // extra brand slots follow and may use any operating process for that brand.
-    dailySlots.sort((a, b) => Number(a.kind === 'brandExtra') - Number(b.kind === 'brandExtra')
-      || new Set(a.options.map((option) => option.employee.id)).size - new Set(b.options.map((option) => option.employee.id)).size
+    for (const slot of dailySlots) {
+      slot.options.sort(compareOptions);
+    }
+    const slotFlexibility = (slot) => slot.options.reduce((sum, option) => sum + (option.employee.brandIds?.length || 0) * (option.employee.processIds?.length || 0), 0);
+    dailySlots.sort((a, b) => new Set(a.options.map((option) => option.employee.id)).size - new Set(b.options.map((option) => option.employee.id)).size
+      || slotFlexibility(a) - slotFlexibility(b)
+      || Number(Boolean(a.extra)) - Number(Boolean(b.extra))
       || a.brand.id.localeCompare(b.brand.id)
-      || (a.process?.id || '').localeCompare(b.process?.id || '')
+      || String(a.process?.id || '').localeCompare(String(b.process?.id || ''))
       || a.index - b.index);
-    const assignments = allocateDailySlots(dailySlots);
-    const matchedSlots = new Map();
-    const processMatched = new Map();
-    const brandMatched = new Map();
-    for (const [employeeId, assignment] of assignments) {
-      const slot = dailySlots[assignment.slotIndex];
-      matchedSlots.set(assignment.slotIndex, assignment.option);
-      brandMatched.set(slot.brand.id, (brandMatched.get(slot.brand.id) || 0) + 1);
-      if (slot.kind === 'process') {
-        const key = `${slot.brand.id}:${slot.process.id}`;
-        processMatched.set(key, (processMatched.get(key) || 0) + 1);
-      }
-      const assignedProcess = assignment.option.process;
+
+    const allocated = allocateDailySlots(dailySlots);
+    const processAssigned = new Map();
+    const brandAssigned = new Map();
+    const entryCounter = new Map();
+
+    const addEntry = (brand, process, employee, suffix) => {
+      const key = brand.id + ':' + process.id;
+      const next = entryCounter.get(key) || 0;
+      entryCounter.set(key, next + 1);
       entries.push({
-        id: `${date}:${slot.brand.id}:${assignedProcess.id}:${slot.kind === 'brandExtra' ? `extra${slot.index + 1}` : slot.index + 1}`,
-        date, brandId: slot.brand.id, processId: assignedProcess.id, employeeId,
-        status: 'assigned', source: 'generated',
+        id: date + ':' + brand.id + ':' + process.id + ':' + (suffix || String(next + 1)),
+        date,
+        brandId: brand.id,
+        processId: process.id,
+        employeeId: employee.id,
+        status: 'assigned',
+        source: 'generated',
       });
+      const processSet = processAssigned.get(key) || new Set();
+      processSet.add(employee.id);
+      processAssigned.set(key, processSet);
+      const brandSet = brandAssigned.get(brand.id) || new Set();
+      brandSet.add(employee.id);
+      brandAssigned.set(brand.id, brandSet);
+    };
+
+    for (const { slotIndex, option } of allocated.assignments) {
+      const slot = dailySlots[slotIndex];
+      addEntry(slot.brand, slot.process || option.process, option.employee, slot.extra ? 'extra' + (slot.index + 1) : undefined);
     }
 
-    for (const { brand, operating, eligible, available, brandExtra } of demands.values()) {
-      let processGap = false;
-      for (const process of operating) {
-        const required = processRequired(brand, process);
-        const assigned = processMatched.get(`${brand.id}:${process.id}`) || 0;
-        if (assigned >= required) continue;
-        processGap = true;
-        const eligiblePeople = eligible.get(process.id) || [];
-        const availablePeople = available.get(process.id) || [];
-        const reason = !eligiblePeople.length ? 'No employees are assigned to this brand and process.' : availablePeople.length < required ? `Only ${availablePeople.length} eligible employees are available after weekly offs and approved unavailability.` : 'Eligible employees are already assigned to another responsibility that day.';
-        conflicts.push({ id: `gap:${date}:${brand.id}:${process.id}`, type: 'process_coverage_gap', severity: 'critical', date, brandId: brand.id, processId: process.id, required, assigned, message: `${brand.name} · ${process.name} needs ${required} distinct staff; ${assigned} assigned. ${reason}` });
+    const extras = demands.slice().sort((a, b) => {
+      const countA = a.availableByProcess.size;
+      const countB = b.availableByProcess.size;
+      return countA - countB || a.brand.id.localeCompare(b.brand.id);
+    });
+    for (const demand of extras) {
+      const { brand, operating, requirements, availableByProcess } = demand;
+      let assigned = brandAssigned.get(brand.id) || new Set();
+      while (assigned.size < requirements.brandRequired) {
+        const candidates = [...new Map(operating.flatMap((process) => availableByProcess.get(process.id).available
+          .filter((employee) => !allocated.employeeBrand.has(employee.id))
+          .map((employee) => [employee.id, employee])).values())]
+          .sort((a, b) => compareOptions({ employee: a }, { employee: b }));
+        const employee = candidates[0];
+        if (!employee) break;
+        const process = operating
+          .filter((item) => employee.processIds?.includes(item.id))
+          .sort((a, b) => (processAssigned.get(brand.id + ':' + a.id)?.size || 0) - (processAssigned.get(brand.id + ':' + b.id)?.size || 0) || a.id.localeCompare(b.id))[0];
+        if (!process) break;
+        allocated.employeeBrand.set(employee.id, brand.id);
+        addEntry(brand, process, employee, 'extra' + (assigned.size + 1));
+        assigned = brandAssigned.get(brand.id);
       }
-      const matchedExtras = [...matchedSlots].filter(([index]) => dailySlots[index].brand.id === brand.id && dailySlots[index].kind === 'brandExtra').length;
-      if (brandExtra > matchedExtras && !processGap) conflicts.push({ id: `brand-gap:${date}:${brand.id}`, type: 'brand_coverage_gap', severity: 'critical', date, brandId: brand.id, required: brandRequired(brand, weekday), assigned: brandMatched.get(brand.id) || 0, message: `${brand.name} requires ${brandRequired(brand, weekday)} distinct staff across its operating processes; the additional brand minimum cannot be met.` });
+    }
+
+    for (const { brand, operating, requirements, availableByProcess } of demands) {
+      for (const { process, required } of requirements.processes) {
+        const assigned = processAssigned.get(brand.id + ':' + process.id)?.size || 0;
+        if (assigned >= required) continue;
+        const { eligible, available } = availableByProcess.get(process.id);
+        const reason = !eligible.length
+          ? 'No employees are assigned to this brand and process.'
+          : available.length < required
+            ? 'Only ' + available.length + ' eligible employees are available after weekly offs and approved unavailability.'
+            : 'Eligible employees are already committed to another brand or another slot for this process.';
+        conflicts.push({
+          id: 'gap:' + date + ':' + brand.id + ':' + process.id,
+          type: 'process_coverage_gap',
+          severity: 'critical',
+          date,
+          brandId: brand.id,
+          processId: process.id,
+          required,
+          assigned,
+          message: brand.name + ' · ' + process.name + ' needs ' + required + ' distinct staff; ' + assigned + ' assigned. ' + reason,
+        });
+      }
+      const assignedPeople = brandAssigned.get(brand.id)?.size || 0;
+      if (assignedPeople < requirements.brandRequired) {
+        conflicts.push({
+          id: 'brand-gap:' + date + ':' + brand.id,
+          type: 'brand_coverage_gap',
+          severity: 'critical',
+          date,
+          brandId: brand.id,
+          required: requirements.brandRequired,
+          assigned: assignedPeople,
+          message: brand.name + ' requires ' + requirements.brandRequired + ' distinct staff across its operating processes; ' + assignedPeople + ' assigned.',
+        });
+      }
     }
   }
+
   addPreferenceNotices(entries, employees, conflicts);
-  return { id: `roster-${month}`, month, status: conflicts.some((c) => c.severity === 'critical') ? 'needs_review' : 'validated', generatedAt: new Date().toISOString(), entries, conflicts };
+  return {
+    id: 'roster-' + month,
+    month,
+    status: conflicts.some((conflict) => conflict.severity === 'critical') ? 'needs_review' : 'validated',
+    generatedAt: new Date().toISOString(),
+    entries,
+    conflicts,
+  };
 }
 
 function addPreferenceNotices(entries, employees, conflicts) {
-  const employeeById = new Map(employees.map((e) => [e.id, e]));
+  const employeeById = new Map(employees.map((employee) => [employee.id, employee]));
   for (const entry of entries) {
     const employee = employeeById.get(entry.employeeId);
-    if (employee?.preferredOffs?.includes(dayKey(entry.date)) && !employee.weeklyOffs?.includes(dayKey(entry.date))) conflicts.push({ id: `preference:${entry.id}`, type: 'preference_conflict', severity: 'warning', date: entry.date, brandId: entry.brandId, processId: entry.processId, employeeId: entry.employeeId, message: `${employee.name} is assigned on a preferred day off. Coverage takes priority; consider a voluntary swap if possible.` });
+    if (employee?.preferredOffs?.includes(dayKey(entry.date)) && !employee.weeklyOffs?.includes(dayKey(entry.date))) {
+      conflicts.push({
+        id: 'preference:' + entry.id,
+        type: 'preference_conflict',
+        severity: 'warning',
+        date: entry.date,
+        brandId: entry.brandId,
+        processId: entry.processId,
+        employeeId: entry.employeeId,
+        message: employee.name + ' is assigned on a preferred day off. Coverage takes priority; consider a voluntary swap if possible.',
+      });
+    }
   }
 }
 
-function validateRoster(roster, { employees, brands, processes, holidays, availability }) {
-  const conflicts = [];
-  const employeeById = new Map(employees.map((e) => [e.id, e]));
-  const brandById = new Map(brands.map((b) => [b.id, b]));
-  const processById = new Map(processes.map((p) => [p.id, p]));
-  const approvedAway = approvedAwaySet(availability);
-  const byDateEmployee = new Map();
-  const invalidEntries = new Set();
-  const add = (conflict) => { if (!conflicts.some((c) => c.id === conflict.id)) conflicts.push(conflict); };
-  for (const entry of roster.entries) {
-    const key = `${entry.date}:${entry.employeeId}`;
-    const prior = byDateEmployee.get(key) || [];
-    const employee = employeeById.get(entry.employeeId);
-    const brand = brandById.get(entry.brandId);
-    const process = processById.get(entry.processId);
-    const day = dayKey(entry.date);
-    const calendarValid = brand && process && operatingProcesses(brand, day, holidayFor(holidays, entry.date, brand), processById).some((p) => p.id === process.id);
-    const assignmentConflict = (type, message) => {
-      invalidEntries.add(entry.id);
-      add({ id: `${type}:${entry.id}`, entryId: entry.id, type: type === 'calendar_conflict' ? type : 'scheduling_conflict', severity: 'critical', date: entry.date, brandId: entry.brandId, processId: entry.processId, employeeId: entry.employeeId, message });
-    };
-    if (!employeeEligible(employee, brand || {}, process || {}) || !brand?.active || !process?.active) assignmentConflict('eligibility', 'Assigned employee is inactive or is not assigned to this brand and process.');
-    if (employee?.weeklyOffs?.includes(day)) assignmentConflict('off', 'Assignment falls on the employee’s mandatory weekly off.');
-    if (approvedAway.has(`${entry.employeeId}:${entry.date}`)) assignmentConflict('away', 'Assignment overlaps approved leave or comp-off.');
-    if (!calendarValid) assignmentConflict('calendar_conflict', 'Assignment does not match the brand and process operating calendars.');
-    if (prior.length > 0) {
-      // Cross-brand overlap remains prohibited by the existing daily collision rule;
-      // same-brand process overlap is now explicitly prohibited as well.
-      invalidEntries.add(entry.id);
-      add({ id: `overlap:${entry.id}`, entryId: entry.id, type: 'scheduling_conflict', severity: 'critical', date: entry.date, brandId: entry.brandId, processId: entry.processId, employeeId: entry.employeeId, message: `Employee has incompatible assignments on ${entry.date}; one person cannot cover multiple processes or brands on the same day.` });
-    }
-    prior.push(entry);
-    byDateEmployee.set(key, prior);
-  }
-
-  for (const date of monthDates(roster.month)) {
-    const weekday = dayKey(date);
-    const dateEntries = roster.entries.filter((e) => e.date === date && !invalidEntries.has(e.id));
-    for (const brand of brands.filter((b) => b.active)) {
-      const operating = operatingProcesses(brand, weekday, holidayFor(holidays, date, brand), processById);
-      if (!operating.length) continue;
-      const { slots } = requirementsFor(brand, operating, weekday);
-      const used = new Set();
-      const assignedByProcess = new Map();
-      const invalidByProcess = new Map();
-      const invalidBrandEmployees = new Set();
-      let processGap = false;
-      for (const p of operating) assignedByProcess.set(p.id, new Set());
-      for (const entry of roster.entries.filter((e) => e.date === date && e.brandId === brand.id && invalidEntries.has(e.id))) {
-        const processSet = invalidByProcess.get(entry.processId) || new Set();
-        processSet.add(entry.employeeId);
-        invalidByProcess.set(entry.processId, processSet);
-        invalidBrandEmployees.add(entry.employeeId);
-      }
-      for (const entry of dateEntries.filter((e) => e.brandId === brand.id)) {
-        const employee = employeeById.get(entry.employeeId);
-        if (employeeEligible(employee, brand, processById.get(entry.processId)) && employeeAvailable(employee, date, weekday, approvedAway)) assignedByProcess.get(entry.processId)?.add(employee.id);
-      }
-      for (const process of operating) {
-        const assigned = assignedByProcess.get(process.id);
-        const required = processRequired(brand, process);
-        const invalidAssigned = invalidByProcess.get(process.id)?.size || 0;
-        if (assigned.size + invalidAssigned < required) {
-          processGap = true;
-          add({ id: `process-gap:${date}:${brand.id}:${process.id}`, type: 'process_coverage_gap', severity: 'critical', date, brandId: brand.id, processId: process.id, required, assigned: assigned.size, message: `${brand.name} · ${process.name} requires ${required} distinct staff; ${assigned.size} valid and available.` });
-        }
-        for (const id of assigned) used.add(id);
-      }
-      const brandNeed = Math.max(0, brandRequired(brand, weekday) - slots.length);
-      if (brandNeed && !processGap && used.size + invalidBrandEmployees.size < brandRequired(brand, weekday)) add({ id: `brand-gap:${date}:${brand.id}`, type: 'brand_coverage_gap', severity: 'critical', date, brandId: brand.id, required: brandRequired(brand, weekday), assigned: used.size, message: `${brand.name} requires ${brandRequired(brand, weekday)} distinct staff across its operating processes; ${used.size} valid and available.` });
-    }
-  }
-  addPreferenceNotices(roster.entries, employees, conflicts);
-  roster.conflicts = conflicts;
-  roster.status = conflicts.some((c) => c.severity === 'critical') ? 'needs_review' : 'validated';
+function validateRoster(roster, state) {
+  const evaluation = evaluateRoster(roster, state);
+  roster.conflicts = evaluation.conflicts;
+  roster.status = evaluation.status;
   roster.validatedAt = new Date().toISOString();
   return roster;
 }

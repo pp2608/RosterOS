@@ -20,7 +20,7 @@ const employees = names.map((name, i) => ({
   role: [0,7,14,21,28].includes(i) ? 'Pod Lead' : i === 31 ? 'Operations Manager' : [2,5,9,12,16,19,24,27].includes(i) ? 'Senior Operations Associate' : 'Operations Associate', active: true,
   weeklyOffs: [[0,6],[1,2],[2,3],[3,4],[4,5],[5,0],[6,1]][i % 7],
   preferredOffs: [[1],[3],[4],[5],[6],[2],[0]][i % 7],
-  brandIds: [], processIds: [],
+  brandIds: [], processIds: [], primaryBrandIds: [],
 }));
 const brandNames = [
   'Aavaran Living','Nivara Home','Urban Mitti','House of Veda','Zariya Fashion','Neem & Co.','Sattva Essentials','The Daily Ritual',
@@ -47,6 +47,7 @@ brands.forEach((brand, i) => {
   const pool = employees.slice(start, start + count);
   pool.forEach((employee, j) => {
     if (!employee.brandIds.includes(brand.id)) employee.brandIds.push(brand.id);
+    employee.primaryBrandIds.push(brand.id);
     brand.processIds.forEach((processId, processIndex) => {
       if ((count === 1 || j === processIndex || processId === processIds.cs) && !employee.processIds.includes(processId)) employee.processIds.push(processId);
     });
@@ -58,6 +59,40 @@ for (const [employeeIndex, brandIndex] of [[19,21],[21,22]]) {
   employee.brandIds.push(brand.id);
   for(const processId of brand.processIds)if(!employee.processIds.includes(processId))employee.processIds.push(processId);
 }
+
+const offPatterns = [[0,6],[1,2],[2,3],[3,4],[4,5],[5,0],[6,1]];
+for (let i = 0; i < 16; i += 1) {
+  const reliefNumber = i + 3;
+  employees.push({
+    id: uuid(5000 + i), employeeCode: `DS-${String(employees.length + 1).padStart(3, '0')}`,
+    name: `Relief Associate ${reliefNumber}`, email: `relief.${String(reliefNumber).padStart(2, '0')}@example.test`,
+    podId: pods[i % pods.length].id, role: 'Relief Operations Associate', active: true,
+    weeklyOffs: offPatterns[(i + 32) % 7], preferredOffs: [[1],[3],[4],[5],[6],[2],[0]][(i + 32) % 7],
+    brandIds: [], processIds: [], primaryBrandIds: [],
+  });
+}
+
+// Keep the existing 30 primary owners. The two unassigned team members and the
+// 16 added associates form three cross-trained relief pools of six employees.
+const reliefEmployees = employees.slice(30);
+reliefEmployees.forEach((employee, index) => {
+  employee.primaryBrandIds = [];
+  const group = Math.floor(index / 6);
+  const coveredBrands = brands.slice(group * 8, group * 8 + 8);
+  employee.brandIds = [...new Set([...employee.brandIds, ...coveredBrands.map((brand) => brand.id)])];
+  employee.processIds = [...new Set([...employee.processIds, ...processes.map((process) => process.id)])];
+  employee.reliefGroup = group + 1;
+});
+// Relief Associate 9 bridges pools two and three, covering the two dates where
+// the last pool otherwise has one fewer available person than its backfill need.
+reliefEmployees[8].brandIds = [...new Set([
+  ...reliefEmployees[8].brandIds,
+  ...brands.slice(16, 24).map((brand) => brand.id),
+])];
+// Move Relief Associate 9's Wednesday off to Tuesday so the bridge is available
+// for midweek backfill while retaining two weekly offs (Tuesday and Thursday).
+reliefEmployees[8].weeklyOffs = [2, 4];
+
 employees.forEach((employee) => {
   if (!employee.brandIds.length && employee.role !== 'Operations Manager') employee.role = 'Operations Coordinator';
   if (!employee.processIds.length) employee.processIds.push(processIds.cs);
@@ -73,13 +108,26 @@ const holidays = [
   { id:uuid(3006), date:`${year}-11-08`, name:'Diwali', scope:'all' },
   { id:uuid(3007), date:`${year}-12-25`, name:'Christmas Day', scope:'all' },
 ];
-const today = new Date();
-const dateAt = (offset) => { const d = new Date(today); d.setDate(d.getDate()+offset); return d.toISOString().slice(0,10); };
-const availability = [
-  {id:uuid(4000),employeeId:employees[3].id,date:dateAt(3),type:'leave',status:'approved',note:'Family commitment'},
-  {id:uuid(4001),employeeId:employees[10].id,date:dateAt(5),type:'leave',status:'pending',note:'Planned annual leave'},
-  {id:uuid(4002),employeeId:employees[19].id,date:dateAt(1),type:'comp_off',status:'approved',note:'Comp-off for weekend coverage'},
-  {id:uuid(4003),employeeId:employees[27].id,date:dateAt(-1),type:'leave',status:'approved',note:'Personal leave'},
-  {id:uuid(4004),employeeId:employees[15].id,date:dateAt(12),type:'comp_off',status:'pending',note:'Comp-off request'},
-];
+const approvedLeaveDays = [2,4,6,9,11,13,16,18,20,23,25,27];
+const availability = [];
+const awayEmployees = new Set();
+approvedLeaveDays.forEach((day, index) => {
+  const date = `${year}-11-${String(day).padStart(2, '0')}`;
+  const weekday = new Date(`${date}T00:00:00Z`).getUTCDay();
+  let employeeIndex = (index * 7 + 3) % employees.length;
+  while (employees[employeeIndex].weeklyOffs.includes(weekday) || awayEmployees.has(employees[employeeIndex].id)) {
+    employeeIndex = (employeeIndex + 1) % employees.length;
+  }
+  const employee = employees[employeeIndex];
+  awayEmployees.add(employee.id);
+  availability.push({
+    id: uuid(4000 + index), employeeId: employee.id, date,
+    type: index % 3 === 0 ? 'comp_off' : 'leave', status: 'approved',
+    note: index % 3 === 0 ? 'Approved comp-off' : 'Approved planned leave',
+  });
+});
+availability.push(
+  { id:uuid(4020), employeeId:employees[10].id, date:`${year}-11-10`, type:'leave', status:'pending', note:'Planned annual leave' },
+  { id:uuid(4021), employeeId:employees[15].id, date:`${year}-11-15`, type:'comp_off', status:'pending', note:'Comp-off request' },
+);
 module.exports = { employees, brands, processes, pods, holidays, availability };
