@@ -1,0 +1,26 @@
+services:
+  - type: web
+    name: rosteros-assessment-api
+    runtime: node
+    plan: free
+    rootDir: server
+    buildCommand: npm ci
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_VERSION
+        value: "22.16.0"
+      - key: NODE_ENV
+        value: production
+      - key: ROSTEROS_STORAGE_MODE
+        value: local-json
+      - key: ROSTEROS_STORE_PATH
+        value: /tmp/rosteros-assessment-demo.json
+      - key: CLIENT_ORIGIN
+        sync: false
+      - key: DEMO_LOGIN_USERNAME
+        sync: false
+      - key: DEMO_LOGIN_PASSWORD
+        sync: false
+      - key: DEMO_AUTH_SECRET
+        sync: false

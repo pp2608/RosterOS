@@ -1,0 +1,21 @@
+# Local credentials, environment files, and signing/decryption keys.
+.env
+.env.*
+!.env.example
+**/.env
+**/.env.*
+!**/.env.example
+*.pem
+*.key
+credentials*
+*credentials*.json
+*CREDENTIALS*
+*service_role*
+*service-role*
+*serviceRole*
+*SERVICE_ROLE*
+*SERVICE-ROLE*
+*SERVICEROLE*
+
+# Runtime state must never be committed.
+server/data/local-store.json
