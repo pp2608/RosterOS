@@ -44,6 +44,12 @@ test('API bootstrap, employee, brand and process management persists locally',as
   assert.equal(fs.existsSync(process.env.ROSTEROS_STORE_PATH),true);
   const persisted=JSON.parse(fs.readFileSync(process.env.ROSTEROS_STORE_PATH,'utf8'));
   assert.equal(persisted.employees.find(e=>e.id===employee.data.id).name,'Updated Demo Employee');
+  const generated=await call('/rosters/generate',{method:'POST',body:JSON.stringify({month:'2026-12'})});assert.equal(generated.response.status,201);
+  const before=(await call('/rosters/2026-12')).data.entries;
+  const unchanged=await call(`/employees/${employee.data.id}`,{method:'PATCH',body:JSON.stringify(changed.data)});assert.equal(unchanged.response.status,200);
+  assert.deepEqual((await call('/rosters/2026-12')).data.entries,before);
+  const renamed=await call(`/employees/${employee.data.id}`,{method:'PATCH',body:JSON.stringify({name:'Updated Again'})});assert.equal(renamed.response.status,200);
+  assert.deepEqual((await call('/rosters/2026-12')).data.entries,before);
 });
 
 test('availability changes, roster generation, manual edit, validation and CSV export work end to end',async()=>{

@@ -25,31 +25,36 @@ function createSupabaseStore(url,key,providedClient){
     for(const roster of state.rosters)validateRoster(roster,state);
     return state;
   }
-  async function save(state){
+  async function saveWorkforce(state){
     await upsert('pods',state.pods.map(p=>({id:p.id,name:p.name,lead_employee_id:null})));
     await upsert('employees',state.employees.map(e=>({id:e.id,employee_code:e.employeeCode,name:e.name,email:e.email,pod_id:e.podId,role:e.role,active:e.active,weekly_offs:e.weeklyOffs||[],preferred_offs:e.preferredOffs||[]})));
     await upsert('pods',state.pods.map(p=>({id:p.id,name:p.name,lead_employee_id:p.lead||null})));
     await upsert('processes',state.processes.map(p=>({id:p.id,name:p.name,active:p.active,operating_days:p.operatingDays,holiday_policy:p.holidayPolicy,min_staff:p.minStaff||1})));
     await upsert('brands',state.brands.map(b=>({id:b.id,name:b.name,active:b.active,timezone:b.timezone||'Asia/Kolkata',operating_days:b.operatingDays,holiday_policy:b.holidayPolicy,min_staff:b.minStaff||1,daily_minimums:b.dailyMinimums||{}})));
-    for(const table of ['employee_brands','employee_processes','brand_processes']){
-      const response=await client.from(table).delete().not(table==='employee_brands'?'employee_id':table==='employee_processes'?'employee_id':'brand_id','is',null);
-      assert(response);
-    }
     const primaryByEmployee=new Map(state.employees.map(e=>[e.id,new Set(e.primaryBrandIds||[])]));
     const eb=state.employees.flatMap(e=>e.brandIds.map(brand_id=>({employee_id:e.id,brand_id,is_primary:primaryByEmployee.get(e.id).has(brand_id)})));
     const ep=state.employees.flatMap(e=>e.processIds.map(process_id=>({employee_id:e.id,process_id})));
     const bp=state.brands.flatMap(b=>b.processIds.map(process_id=>({brand_id:b.id,process_id,min_staff:b.processMinimums?.[process_id]||1})));
     await upsert('employee_brands',eb);await upsert('employee_processes',ep);await upsert('brand_processes',bp);
+    const pruneLinks=async(table,ownerColumn,ownerId,linkColumn,retainedIds)=>{
+      let query=client.from(table).delete().eq(ownerColumn,ownerId);
+      if(retainedIds.length)query=query.not(linkColumn,'in',`(${retainedIds.join(',')})`);
+      assert(await query);
+    };
+    for(const employee of state.employees){
+      await pruneLinks('employee_brands','employee_id',employee.id,'brand_id',employee.brandIds);
+      await pruneLinks('employee_processes','employee_id',employee.id,'process_id',employee.processIds);
+    }
+    for(const brand of state.brands)await pruneLinks('brand_processes','brand_id',brand.id,'process_id',brand.processIds);
     await upsert('holidays',state.holidays.map(h=>({id:h.id,date:h.date,name:h.name,scope:h.scope||'all'})));
     await upsert('availability',state.availability.map(a=>({id:a.id,employee_id:a.employeeId,date:a.date,type:a.type,status:a.status,note:a.note||null})));
-    for(const roster of state.rosters){
-      if(!/^[0-9a-f-]{36}$/i.test(roster.id))roster.id=require('node:crypto').randomUUID();
-      await upsert('rosters',[{id:roster.id,month:`${roster.month}-01`,status:roster.status,generated_at:roster.generatedAt||new Date().toISOString(),validated_at:roster.validatedAt||null}]);
-      assert(await client.from('roster_entries').delete().eq('roster_id',roster.id));
-      const records=roster.entries.map(e=>({id:/^[0-9a-f-]{36}$/i.test(e.id)?e.id:require('node:crypto').randomUUID(),roster_id:roster.id,work_date:e.date,brand_id:e.brandId,process_id:e.processId,employee_id:e.employeeId,source:e.source||'generated'}));
-      await upsert('roster_entries',records);
-      records.forEach((r,i)=>{roster.entries[i].id=r.id;});
-    }
+    // Workforce edits must never rewrite monthly rosters.
+  }
+  async function save(state){
+    await saveWorkforce(state);
+    // Initial synchronization retains existing behavior while writing each
+    // roster through the transaction-wrapped, roster-only RPC.
+    for(const roster of state.rosters)await saveRoster(roster);
   }
   async function saveRoster(roster){
     if(!/^[0-9a-f-]{36}$/i.test(roster.id))roster.id=require('node:crypto').randomUUID();
@@ -66,6 +71,6 @@ function createSupabaseStore(url,key,providedClient){
     roster.id=result.data;
     return roster;
   }
-  return {load,save,saveRoster,client};
+  return {load,save,saveWorkforce,saveRoster,client};
 }
 module.exports={createSupabaseStore};

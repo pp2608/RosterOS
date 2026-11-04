@@ -110,16 +110,27 @@ let stateSource = initialStateSource;
 
 async function persist() {
     if (remoteStore) {
-        return remoteStore.save(state);
+        return remoteStore.saveWorkforce(state);
     }
 
     fs.mkdirSync(path.dirname(storePath), { recursive: true });
 
-    fs.writeFileSync(
-        storePath,
-        `${JSON.stringify(state, null, 2)}\n`,
-        'utf8'
-    );
+    const temporaryPath = `${storePath}.${randomUUID()}.tmp`;
+    try {
+        fs.writeFileSync(
+            temporaryPath,
+            `${JSON.stringify(state, null, 2)}\n`,
+            'utf8'
+        );
+        fs.renameSync(temporaryPath, storePath);
+    } catch (error) {
+        try {
+            fs.rmSync(temporaryPath, { force: true });
+        } catch {
+            // Keep the original persistence error.
+        }
+        throw error;
+    }
 }
 
 async function persistRoster(roster) {
@@ -549,13 +560,22 @@ for (const collection of collections) {
             return res.status(400).json({ error: invalid });
         }
 
+        const previousRecords = state[collection].slice();
+        const previousRosters = structuredClone(state.rosters);
         state[collection].push(record);
 
         for (const roster of state.rosters) {
             validateRoster(roster, state);
         }
 
-        await persist();
+        try {
+            await persist();
+        } catch (error) {
+            state[collection] = previousRecords;
+            state.rosters = previousRosters;
+            console.error(`${labels[collection]} creation failed:`, error);
+            return res.status(500).json({ error: `Unable to save ${labels[collection].toLowerCase()}.` });
+        }
 
         res.status(201).json(record);
     });
@@ -596,13 +616,22 @@ for (const collection of collections) {
             return res.status(400).json({ error: invalid });
         }
 
+        const previousRecords = state[collection].slice();
+        const previousRosters = structuredClone(state.rosters);
         state[collection][index] = candidate;
 
         for (const roster of state.rosters) {
             validateRoster(roster, state);
         }
 
-        await persist();
+        try {
+            await persist();
+        } catch (error) {
+            state[collection] = previousRecords;
+            state.rosters = previousRosters;
+            console.error(`${labels[collection]} update failed:`, error);
+            return res.status(500).json({ error: `Unable to save ${labels[collection].toLowerCase()}.` });
+        }
 
         res.json(state[collection][index]);
     });
@@ -654,6 +683,7 @@ app.post('/api/rosters/generate', async(req, res) => {
         } catch (saveError) {
             // Restore the previous in-memory roster if saving fails.
             state.rosters = previousRosters;
+            saveError.persistenceFailure = true;
             throw saveError;
         }
 
@@ -661,8 +691,8 @@ app.post('/api/rosters/generate', async(req, res) => {
     } catch (error) {
         console.error('Roster generation failed:', error);
 
-        res.status(400).json({
-            error: error.message
+        res.status(error.persistenceFailure ? 500 : 400).json({
+            error: error.persistenceFailure ? 'Unable to save the generated roster.' : error.message
         });
     }
 });
@@ -742,11 +772,18 @@ app.patch('/api/rosters/:month/entries/:entryId', async(req, res) => {
         });
     }
 
+    const previousRoster = structuredClone(roster);
     entry.employeeId = req.body.employeeId;
     entry.source = 'manual';
 
     validateRoster(roster, state);
-    await persistRoster(roster);
+    try {
+        await persistRoster(roster);
+    } catch (error) {
+        state.rosters[state.rosters.indexOf(roster)] = previousRoster;
+        console.error('Roster assignment update failed:', error);
+        return res.status(500).json({ error: 'Unable to save the roster assignment.' });
+    }
 
     res.json({
         ...roster,
@@ -765,9 +802,16 @@ app.post('/api/rosters/:month/validate', async(req, res) => {
         });
     }
 
+    const previousRoster = structuredClone(roster);
     const result = validateRoster(roster, state);
 
-    await persistRoster(roster);
+    try {
+        await persistRoster(roster);
+    } catch (error) {
+        state.rosters[state.rosters.indexOf(roster)] = previousRoster;
+        console.error('Roster validation save failed:', error);
+        return res.status(500).json({ error: 'Unable to save roster validation.' });
+    }
 
     res.json({
         ...result,

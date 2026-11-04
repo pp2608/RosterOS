@@ -31,6 +31,31 @@ test('saveRoster uses only the roster RPC and scopes the submitted entries to on
   assert.match(saved.entries[0].id,/^[0-9a-f-]{36}$/i);
 });
 
+test('workforce persistence never writes or deletes roster data',async()=>{
+  const calls=[];
+  const client={
+    from(table){
+      const query={
+        eq(column,value){calls.push({table,operation:'filter',column,value});return query;},
+        not(column,operator,value){calls.push({table,operation:'exclude',column,operator,value});return query;},
+        then(resolve,reject){calls.push({table,operation:'delete'});return Promise.resolve({data:[],error:null}).then(resolve,reject);},
+      };
+      return {
+        upsert(values){calls.push({table,operation:'upsert',values});return Promise.resolve({data:[],error:null});},
+        delete(){return query;},
+      };
+    },
+    async rpc(name){calls.push({operation:'rpc',name});return{data:randomUUID(),error:null};},
+  };
+  const store=createSupabaseStore('https://example.supabase.co','test-key',client);
+  await store.saveWorkforce({
+    pods:[],employees:[],processes:[],brands:[],holidays:[],availability:[],
+    rosters:[{id:randomUUID(),month:'2026-11',entries:[{id:randomUUID(),date:'2026-11-01'}]}],
+  });
+  assert.equal(calls.some(call=>['rosters','roster_entries'].includes(call.table)),false);
+  assert.equal(calls.some(call=>call.operation==='rpc'),false);
+});
+
 test('roster RPC migration writes only roster tables',()=>{
   const migration=fs.readFileSync(path.join(__dirname,'..','supabase','migrations','202611030001_save_roster_rpc.sql'),'utf8');
   const writtenTables=[...migration.matchAll(/(?:insert\s+into|delete\s+from)\s+public\.([a-z_]+)/gi)].map(match=>match[1]);
