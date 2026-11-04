@@ -1,190 +1,415 @@
-# RosterOS
+# RosterOS — Smart Workforce & Roster Management System
 
-RosterOS is a DataStraw internship assessment implementation for monthly staffing across customer brands, operational processes, and pods. The repository contains a React/Vite client and an Express API. It runs with persistent local JSON data without cloud credentials, or uses Supabase PostgreSQL when server credentials are configured.
+RosterOS is a smart roster management system developed as part of the DataStraw internship assessment. It helps manage employees, customer brands, operational processes, pods, availability, and monthly staffing schedules through a centralized web application.
 
-## Current capabilities
+The system uses a deterministic, rule-based scheduling engine to generate monthly rosters, check staffing requirements, identify conflicts, and support manual roster adjustments.
 
-- 32 fictional employees, 24 brands, 4 processes, 5 pods, public holidays, leave requests, comp-offs, weekly offs, and soft day-off preferences.
-- Employee create, edit, deactivate, brand/process assignment, pod and role assignment, mandatory weekly offs, and preferred days off.
-- Brand and process calendars, public-holiday rules, minimum staffing, per-process brand requirements, day-specific brand staffing, and active/inactive status.
-- Pod creation/editing and lead assignment.
-- Time-off and public-holiday management, pending leave approval, and availability changes that revalidate generated rosters.
-- Deterministic monthly roster generation with brand and process coverage checks, eligibility checks, weekly offs, approved unavailability, and daily assignment collision checks.
-- Company, pod, brand, process, and employee filters; assignment list and monthly staff grid; manual reassignment; revalidation; CSV export.
-- Explanations for critical coverage gaps and advisory preference conflicts.
+## Live Application
 
-The schedule is a daily responsibility assignment model. An employee may cover multiple processes for the same brand on one date as one work shift. They may not cover two different brands on the same date. Shift start/end times and authentication are outside this assessment implementation.
+- **Live App:** https://roster-os-eight.vercel.app
+- **Backend API:** https://rosteros-assessment-api.onrender.com
+- **API Health Check:** https://rosteros-assessment-api.onrender.com/api/health
+- **GitHub Repository:** https://github.com/pp2608/RosterOS
+- **Database:** Supabase PostgreSQL
 
-The installed client template did not include Tailwind, React Router, or Lucide React, and package-registry access was unavailable. To keep the requested local build runnable without adding packages, the UI uses component-scoped CSS, browser path navigation with Vite’s SPA fallback, and local inline SVG icons. Recharts is omitted because the dashboard reports computed counts and coverage instead of adding decorative charts.
+## Features
 
-## Project structure
+- Employee management, including create, edit, and deactivate operations.
+- Brand and process management.
+- Pod creation, editing, and lead assignment.
+- Employee-to-brand and employee-to-process assignments.
+- Weekly offs and preferred days off.
+- Leave requests, approved leave, and comp-off management.
+- Public holiday and operating calendar configuration.
+- Brand-level and process-level staffing requirements.
+- Monthly automated roster generation.
+- Employee eligibility and availability checks.
+- Detection of staffing gaps and scheduling conflicts.
+- Manual employee reassignment.
+- Roster validation and revalidation.
+- Monthly roster view and CSV export.
+- Dashboard showing workforce statistics and roster coverage.
+
+## Technology Stack
+
+| Layer | Technology |
+|---|---|
+| Frontend | React 19 |
+| Build Tool | Vite |
+| Backend | Node.js |
+| API Framework | Express.js |
+| Database | Supabase PostgreSQL |
+| Scheduling Engine | JavaScript |
+| Styling | Component-scoped CSS |
+| Deployment | Vercel and Render |
+| Testing | Node.js built-in test runner |
+
+## Project Structure
 
 ```text
-client/                   React 19 + Vite UI
-  src/App.jsx             Dashboard, people, operations, availability, roster views
-  src/App.css             Responsive interface styles
-  src/icons.jsx           Local inline SVG icons
-  src/routing.jsx         Native path routing for offline dependency availability
-server/                   Express API and scheduling engine
-  src/data.js             Fictional seed records
-  src/index.js            REST API and local/Supabase persistence selection
-  src/scheduler.js        Deterministic generation and validation rules
-  src/supabaseStore.js    Normalized Supabase PostgreSQL adapter
-  test/                   Scheduler and API tests (node:test)
-  supabase/schema.sql     PostgreSQL schema
-  supabase/seed.sql       Repeatable fictional sample dataset
-.env.example              Server and optional client settings
-APPROACH.md               Short assessment submission note
+RosterOS/
+│
+├── client/
+│   ├── src/
+│   │   ├── App.jsx
+│   │   ├── App.css
+│   │   ├── icons.jsx
+│   │   └── routing.jsx
+│   └── vercel.json
+│
+├── server/
+│   ├── src/
+│   │   ├── data.js
+│   │   ├── index.js
+│   │   ├── scheduler.js
+│   │   └── supabaseStore.js
+│   │
+│   ├── test/
+│   ├── supabase/
+│   │   ├── schema.sql
+│   │   └── seed.sql
+│   └── package.json
+│
+├── .env.example
+├── render.yaml
+└── README.md
 ```
 
-## Run locally
+## System Architecture
 
-Node.js 20 or newer is recommended. The implementation uses the dependencies already present in the client and server manifests; no Supabase account is needed locally.
+RosterOS follows a client-server architecture.
 
-1. Copy `.env.example` to `server/.env` and set a demo username, a strong demo password, and a random signing secret. The API will not start without these authentication settings. Keep `server/.env` local and ignored by Git. Leave Supabase values blank and use `ROSTEROS_STORAGE_MODE=auto` for the local JSON store.
-2. In one terminal:
+1. **Frontend:** React provides the dashboard and workforce management interface.
+2. **Backend:** Express exposes REST APIs and handles business logic.
+3. **Scheduling engine:** The backend generates and validates rosters using predefined rules.
+4. **Database:** Supabase PostgreSQL stores workforce and roster data.
+5. **Deployment:** The frontend is hosted on Vercel and the backend API on Render.
 
-   ```powershell
-   cd server
-   npm install
-   npm run dev
-   ```
+The frontend communicates with the backend API. Scheduling decisions and validation are handled on the server rather than in browser code.
 
-   The API listens on `http://localhost:4000`.
+## Database Design
 
-3. In a second terminal:
+The database uses normalized tables to represent the workforce and operational structure.
 
-   ```powershell
-   cd client
-   npm install
-   npm run dev
-   ```
+Main entities include:
 
-   Open the Vite URL shown in the terminal. Its `/api` requests proxy to port 4000.
+- Employees
+- Brands
+- Processes
+- Pods
+- Employee-to-brand assignments
+- Employee-to-process assignments
+- Brand-to-process requirements
+- Availability
+- Holidays
+- Rosters
+- Roster entries
 
-4. Sign in with the values set in `DEMO_LOGIN_USERNAME` and `DEMO_LOGIN_PASSWORD`. The login is shared by demo viewers; there are no individual accounts or roles. Sign out clears the browser session token.
+Employees can be associated with multiple brands and processes. Brand-process relationships define the processes required by each brand and their staffing minimums.
 
-Local changes are stored in `server/data/local-store.json`, which is ignored by Git. Removing that file intentionally resets the API to `src/data.js` sample records. Tests use their own temporary store.
+## Roster Generation Logic
 
-## Environment variables
+RosterOS uses a deterministic, rule-based scheduling algorithm rather than AI-based scheduling.
 
-| Variable | Used by | Purpose |
-| --- | --- | --- |
-| `PORT` | API | HTTP port; defaults to `4000`. |
-| `CLIENT_ORIGIN` | API | Comma-separated exact browser origins. Local development defaults to `http://localhost:5173`; production requires an explicit value and rejects wildcards/paths. |
-| `DEMO_LOGIN_USERNAME` | API only | Shared demo login username. Keep it on the server; it is not a frontend build variable. |
-| `DEMO_LOGIN_PASSWORD` | API only | Shared demo login password. Use a unique, strong value and keep it on the server. |
-| `DEMO_AUTH_SECRET` | API only | Random signing secret of at least 32 bytes for eight-hour bearer tokens. Never expose it to the client. |
-| `SUPABASE_URL` | API | Supabase project URL. |
-| `SUPABASE_SECRET_KEY` | API only | Current server-side Supabase credential. Never put this in a `VITE_` variable or browser code. |
-| `SUPABASE_SERVICE_ROLE_KEY` | API only | Legacy server-side credential name accepted for compatibility. |
-| `ROSTEROS_STORAGE_MODE` | API | `auto`, `local-json`, or `supabase`. The Render demo blueprint pins `local-json` and will not connect to Supabase, even if Supabase variables are present. |
-| `ROSTEROS_STORE_PATH` | API | Optional local JSON store path. Render uses an isolated temporary path that resets with the service. |
-| `VITE_API_URL` | Client build | API origin/prefix for a deployed client, e.g. `https://api.example.com/api`. Leave blank locally to use the Vite proxy. |
+For every date in the selected month, the scheduler:
 
-The server needs these required demo authentication variables in `server/.env`:
+1. Checks whether each brand is operational on that date.
+2. Checks the operating calendar and holiday rules.
+3. Identifies the active processes required by each brand.
+4. Finds employees eligible for the relevant brand and process.
+5. Excludes employees on mandatory weekly offs.
+6. Excludes employees with approved leave or comp-off.
+7. Allocates eligible employees to satisfy process-level staffing requirements.
+8. Checks the distinct employee requirement at brand level.
+9. Prevents employees from being assigned to different brands on the same date.
+10. Records staffing gaps, conflicts, and preference warnings.
 
-```dotenv
+Employees may cover multiple processes for the same brand on the same day as one work shift. They cannot be assigned to two different brands on the same day.
+
+Candidate selection considers preferred days off, current daily workload, and stable employee ID ordering.
+
+## Validation and Conflict Handling
+
+The validation engine checks:
+
+- Employee eligibility.
+- Active and inactive employee status.
+- Brand and process assignments.
+- Operating calendars.
+- Public holidays.
+- Mandatory weekly offs.
+- Approved leave and comp-offs.
+- Cross-brand daily assignment conflicts.
+- Process-level staffing minimums.
+- Brand-level distinct employee requirements.
+- Preferred day-off conflicts.
+
+The system distinguishes between critical staffing conflicts and advisory preference notices.
+
+Incomplete staffing is not silently treated as valid. Managers can review conflicts, make manual changes, and run validation again.
+
+## Current Live Demo Status
+
+The live dashboard currently displays the following workforce information:
+
+| Metric | Live value |
+|---|---:|
+| Active employees | 48 |
+| Active brands | 24 |
+| Operating processes | 4 |
+| Operational pods | 5 |
+| Scheduled assignments | 639 |
+| Staffing coverage | 73% |
+| Staffing slots fulfilled | 1,080 / 1,483 |
+| Critical issues | 405 |
+| Preference notices | 124 |
+
+<sub>Figures reflect the live dashboard at the time this README was updated. The current roster is marked Needs Review because staffing requirements remain incomplete.</sub>
+
+## Assessment Design Questions
+
+### 1. How are employees, brands, processes, and pods modelled?
+
+Employees belong to pods, and pod leads reference employees. Employees and brands have many-to-many relationships through assignment tables. Employee-process assignments determine which processes an employee can support.
+
+A separate brand-process relationship stores the processes required by each brand and their minimum staffing requirements.
+
+### 2. How does the system generate and validate rosters?
+
+The backend iterates through the dates in the selected month, checks brand and process calendars, filters eligible employees, and allocates staff based on availability and scheduling priorities.
+
+The validation engine then checks process-level and brand-level staffing requirements. Unmet requirements are recorded as conflicts with reasons.
+
+### 3. How does the system handle single-resource and multi-employee brands?
+
+For a single-resource brand, one eligible employee can cover multiple processes for that brand as one work shift.
+
+For multi-employee brands, different employees can be assigned to different processes. Brand-level minimum staffing rules ensure that enough distinct employees are available.
+
+### 4. What happens if the only employee for a brand is unavailable?
+
+If the employee is on approved leave, comp-off, or a mandatory weekly off, they are excluded from the candidate pool.
+
+The scheduler records critical process-level gaps and a brand-level staffing gap if the required minimum is not met. The manager can review the issue and take corrective action.
+
+### 5. How are conflicting requirements or insufficient staffing handled?
+
+Hard constraints take priority over preferences. The system does not allocate employees who are unavailable, ineligible, or already assigned to another brand on the same day.
+
+If staffing requirements cannot be fulfilled, the system records the gaps and displays the reasons. Preferred day-off conflicts are treated as advisory notices.
+
+### 6. Which steps are automated and which remain under human control?
+
+Roster generation, employee eligibility checks, and validation are automated.
+
+Managers remain responsible for configuring employees, brands, processes, calendars, approving leave, making manual adjustments, and deciding how to resolve conflicts.
+
+This approach combines automation with human decision-making.
+
+### 7. What would change if the team and brand count doubled?
+
+The existing relational data model supports adding more employees and brands without redesigning the entire application.
+
+For larger workloads, I would introduce pagination, optimized database indexes, background roster-generation jobs, improved candidate lookup, and stronger multi-user access controls.
+
+### 8. What would be improved first with another week?
+
+I would prioritize:
+
+- Individual user authentication and role-based permissions.
+- Manager and pod-lead access controls.
+- Atomic database transactions for multi-table updates.
+- Audit history for roster changes.
+- More extensive testing with larger workforce datasets.
+- Performance improvements for monthly roster generation.
+
+## Running the Project Locally
+
+### Prerequisites
+
+- Node.js 20 or newer.
+- npm.
+- Git.
+
+### 1. Clone the repository
+
+```bash
+git clone https://github.com/pp2608/RosterOS.git
+cd RosterOS
+```
+
+### 2. Configure the backend
+
+Create a `.env` file inside the `server` directory using `.env.example` as a reference.
+
+Configure the demo authentication values:
+
+```env
+PORT=4000
+CLIENT_ORIGIN=http://localhost:5173
+
 DEMO_LOGIN_USERNAME=your-demo-username
-DEMO_LOGIN_PASSWORD=use-a-unique-long-password
-DEMO_AUTH_SECRET=paste-a-random-secret-of-at-least-32-bytes
+DEMO_LOGIN_PASSWORD=your-strong-password
+DEMO_AUTH_SECRET=your-random-secret
+
+ROSTEROS_STORAGE_MODE=local-json
 ```
 
-Generate a signing secret with `node -e "console.log(require('node:crypto').randomBytes(32).toString('base64url'))"`. Configure all three `DEMO_*` values in the API host's server-side environment for a public demo. Do not put them in `client/.env`, any `VITE_*` variable, source code, or GitHub. All API data and export routes require a valid bearer token; only `GET /api/health` and `POST /api/auth/login` are public. Tokens are held in browser session storage and expire after eight hours.
+For local development, the local JSON storage mode can be used without connecting Supabase.
 
-The public Render blueprint uses `ROSTEROS_STORAGE_MODE=local-json` with a separate `/tmp` store and does not provision or connect a database. It loads only the fictional seed data; changes made during the demo are temporary and reset when the service restarts or redeploys. Do not add credentials for the existing Supabase project to Render.
+Never commit actual credentials or secret keys to GitHub.
 
-Supabase remains available for local or separate test environments by choosing `ROSTEROS_STORAGE_MODE=supabase` and supplying `SUPABASE_URL` plus a server-only `SUPABASE_SECRET_KEY`. Use a newly provisioned, isolated demo project only. Never point the public assessment demo at the existing November roster or live Supabase project. For a new empty isolated project, apply `server/supabase/schema.sql` and then either run `server/supabase/seed.sql` or allow the API to initialize the empty schema from fictional `server/src/data.js` data.
+### 3. Install and start the backend
 
-There is no versioned migration directory yet. `schema.sql` is the initial schema/bootstrap file; `CREATE TABLE IF NOT EXISTS` does not migrate an older table layout. For an existing project, inspect its schema and data before applying changes, and write a targeted migration rather than running the sample seed. The adapter reads and writes the normalized tables through the server-side Supabase client. Related writes are sequential rather than transactional, so do not treat this assessment adapter as production-ready for concurrent users.
+```bash
+cd server
+npm install
+npm run dev
+```
 
-`GET /api/health` is public and returns a 200 response with readiness and persistence mode for hosting-platform checks. The Render blueprint points its health check at `/api/health`.
+The backend runs at:
 
-The database adapter writes related tables through sequential Supabase REST requests. The shared demo login gates access to the application but does not provide individual accounts, roles, or row-level authorization. Do not use it for multi-user production operations; move multi-table mutations into PostgreSQL RPC functions/transactions and add authenticated roles and row-level access rules before exposing manager actions publicly.
+```text
+http://localhost:4000
+```
 
-## Architecture and scheduling
+### 4. Install and start the frontend
 
-The client is a React interface served by Vite. The Express REST API owns roster generation and validation; browser code does not make scheduling decisions. `src/supabaseStore.js` maps normalized PostgreSQL relationships to the engine’s domain objects. Local development uses the same API with a durable JSON file.
+Open another terminal:
 
-For every date in the selected month the scheduler:
+```bash
+cd client
+npm install
+npm run dev
+```
 
-1. Resolves each active brand’s operating day and applicable holiday policy.
-2. Resolves active brand processes and each process’s own calendar and holiday policy.
-3. Finds active employees assigned to both the brand and process.
-4. Removes employees on mandatory weekly offs or approved leave/comp-off.
-5. Satisfies process minimums, then adds eligible staff until the brand’s distinct-resource minimum is met.
-6. Prevents an employee from being allocated to different brands on the same day. The same brand resource may cover its processes as one shift.
-7. Chooses candidates by soft preferred-off avoidance, then current daily workload, then stable employee ID order.
-8. Emits critical process gaps, brand-level gaps, scheduling conflicts, and warning-level preference notices with counts and reasons.
+Open the Vite URL displayed in the terminal, normally:
 
-Generation retains incomplete days as explicit conflicts and marks the roster `needs_review`; it does not label an under-covered roster valid. Revalidation after edits or availability changes checks persisted entries against current eligibility, calendars, weekly offs, approved unavailability, cross-brand conflicts, and both brand/process requirements. It flags conflicts for manager action rather than silently regenerating manual changes.
+```text
+http://localhost:5173
+```
 
-## Data model
+The frontend uses the Vite development proxy to communicate with the backend API.
 
-The schema includes pods and leads, employees, brands, processes, employee-to-brand and employee-to-process joins, brand-to-process requirements, holidays, availability, rosters, and roster entries. Foreign keys, unique keys, checks, and lookup indexes protect the relationships. Brand-level daily staffing overrides are keyed by weekday; brand-process minimums live in a normalized join table.
+### 5. Login
 
-The seed has 32 employees in five pods, 24 fictional brands, and four processes. Nineteen of 24 brands (about 79%) are single-resource; the other five have two or three resources. The sample includes cross-brand employees, shared process assignments, different calendars, preferences, leave, and comp-off. Two employees are operations coordinators available for new accounts.
+Use the username and password configured in the backend `.env` file.
 
-## API overview
+## Environment Variables
 
-- `GET /api/health`, `GET /api/bootstrap`
-- `POST /api/employees`, `PATCH /api/employees/:id`
-- `POST /api/brands`, `PATCH /api/brands/:id`
-- `POST /api/processes`, `PATCH /api/processes/:id`
-- `POST /api/pods`, `PATCH /api/pods/:id`
-- `POST /api/availability`, `PATCH /api/availability/:id`
-- `POST /api/holidays`, `PATCH /api/holidays/:id`
-- `POST /api/rosters/generate` with `{ "month": "YYYY-MM" }`
-- `GET /api/rosters/:month`, `POST /api/rosters/:month/validate`
-- `PATCH /api/rosters/:month/entries/:entryId` with `{ "employeeId": "..." }`
-- `GET /api/rosters/:month/export.csv`
+| Variable | Purpose |
+|---|---|
+| `PORT` | Backend API port |
+| `CLIENT_ORIGIN` | Allowed frontend origin |
+| `DEMO_LOGIN_USERNAME` | Demo login username |
+| `DEMO_LOGIN_PASSWORD` | Demo login password |
+| `DEMO_AUTH_SECRET` | Token signing secret |
+| `ROSTEROS_STORAGE_MODE` | Selects local JSON or Supabase storage |
+| `ROSTEROS_STORE_PATH` | Optional local JSON storage path |
+| `SUPABASE_URL` | Supabase project URL |
+| `SUPABASE_SECRET_KEY` | Server-side Supabase credential |
+| `SUPABASE_SERVICE_ROLE_KEY` | Alternative legacy server-side credential |
+| `VITE_API_URL` | Deployed backend API URL used by the frontend |
 
-## Verification
+Supabase credentials must remain on the backend. Never expose them through frontend code or `VITE_*` variables.
 
-From `server/`, run:
+## API Endpoints
 
-```powershell
+| Method | Endpoint | Purpose |
+|---|---|---|
+| GET | `/api/health` | API health check |
+| GET | `/api/bootstrap` | Initial application data |
+| POST | `/api/employees` | Create employee |
+| PATCH | `/api/employees/:id` | Update employee |
+| POST | `/api/brands` | Create brand |
+| PATCH | `/api/brands/:id` | Update brand |
+| POST | `/api/processes` | Create process |
+| PATCH | `/api/processes/:id` | Update process |
+| POST | `/api/pods` | Create pod |
+| PATCH | `/api/pods/:id` | Update pod |
+| POST | `/api/availability` | Add availability record |
+| PATCH | `/api/availability/:id` | Update availability |
+| POST | `/api/holidays` | Add holiday |
+| PATCH | `/api/holidays/:id` | Update holiday |
+| POST | `/api/rosters/generate` | Generate monthly roster |
+| GET | `/api/rosters/:month` | Retrieve monthly roster |
+| POST | `/api/rosters/:month/validate` | Validate roster |
+| PATCH | `/api/rosters/:month/entries/:entryId` | Manually reassign employee |
+| GET | `/api/rosters/:month/export.csv` | Export roster CSV |
+
+## Testing
+
+Backend tests can be run from the `server` directory:
+
+```bash
 npm test
 ```
 
-From `client/`, run:
+Frontend checks can be run from the `client` directory:
 
-```powershell
+```bash
 npm run lint
 npm run build
 ```
 
-Scheduler tests cover single-owner loss, multi-resource coverage, shared processes, Sunday/public-holiday calendars, cross-brand conflicts, approved leave and comp-offs versus pending leave, insufficient staffing, manual invalid edits, and preference warnings. API tests cover sample counts, create/edit, local persistence, availability impact, generation, validation, manual assignment, holiday/pod management, and CSV output.
+The tests cover scheduling rules, employee eligibility, availability, leave, weekly offs, staffing requirements, conflict detection, manual changes, and API operations.
 
-## Assessment section 8: design questions
+## Deployment
 
-1. **How are employees, brands, processes, pods, and their relationships modelled?** Employees belong to a pod and pod leads reference employees. Employees and brands have many-to-many assignment tables for brands and processes. A separate brand-process relation stores each client’s processes and minimum process staffing. Calendars and staffing rules belong to the relevant brand/process records; roster entries reference employee, brand, process, date, and source.
+### Frontend — Vercel
 
-2. **How does the system generate a roster and decide whether constraints are satisfied?** The API iterates dates, brand calendars, then process calendars in stable order. It filters assigned employees by hard availability, allocates using stable preference/workload/ID ordering, then validates process counts and brand distinct-resource counts. Unmet requirements become critical conflicts with counts and reasons.
+The React/Vite frontend is deployed on Vercel.
 
-3. **How does it handle single-resource and multi-employee brands?** A one-person brand can assign its resource across all open processes as a single shift. A multi-resource brand can assign people to different processes or share a process; its brand-level minimum ensures enough distinct employees work that day.
+Live URL:
 
-4. **What happens when the employee managing every process for a brand is unavailable?** Approved leave, comp-off, or a mandatory weekly off removes that employee from the candidate pool. Each affected process receives a critical gap; the brand receives a gap if its distinct-resource minimum is missed. The message explains the available capacity and reason.
+https://roster-os-eight.vercel.app
 
-5. **How are conflicting requirements or insufficient staffing handled?** Hard constraints—active status, assignment eligibility, calendar, weekly off, approved time off, and no cross-brand overlap—take precedence over preferences. Infeasible process and brand requirements remain visible with required/assigned counts. Preference violations are warnings.
+### Backend — Render
 
-6. **Which steps are automated and which remain under human control? Why?** Candidate allocation and validation are automated and deterministic. Managers configure assignments/calendars, approve leave, make manual changes, and decide how to handle conflicts or preference warnings. The tool exposes infeasible days instead of making unapproved business decisions or silently publishing them.
+The Express API is hosted on Render.
 
-7. **What would change if the team and brand count doubled?** The schema and CRUD API accept additional records without code changes. I would add pagination and date/brand/process indexes, run month generation as a background job, isolate tenants, and optimize candidate lookup to avoid rescanning every employee per responsibility.
+API URL:
 
-8. **What would be improved first with another week?** I would replace the shared demo login with individual authenticated roles and manager/pod-lead permissions, make multi-table writes atomic through PostgreSQL transactions/RPC, and add audit history. I would also run the app against provisioned Supabase and hosted services before calling it production-ready.
+https://rosteros-assessment-api.onrender.com
 
-## Deployment and submission
+Health endpoint:
 
-### Render API and Vercel client
+https://rosteros-assessment-api.onrender.com/api/health
 
-`render.yaml` defines the Express API service, pinned Node runtime, install/start commands, health check, and isolated `local-json` storage mode. `client/vercel.json` defines the Vite build/output and SPA fallback. The public demo does not require Supabase.
+### Database — Supabase
 
-1. Create a Vercel project from this repository and set its **Root Directory** to `client`. Use the Vite framework preset; the checked-in config uses `npm ci`, `npm run build`, and `dist`. Deploy once to obtain the frontend origin.
-2. Create the Render service from `render.yaml`. Set `CLIENT_ORIGIN` to the exact Vercel production origin (for example, `https://your-project.vercel.app`). Set `DEMO_LOGIN_USERNAME`, `DEMO_LOGIN_PASSWORD` (at least 12 characters), and `DEMO_AUTH_SECRET` (random, at least 32 bytes) in Render's environment settings. Keep all `SUPABASE_*` variables unset.
-3. Copy the Render service's HTTPS URL and set Vercel's production environment variable `VITE_API_URL` to `https://your-render-service.onrender.com/api`. Redeploy the Vercel client after setting this build-time variable.
-4. Check Render's `https://your-render-service.onrender.com/api/health`, then open the Vercel site and sign in using the configured demo username/password.
+The live application is connected to Supabase PostgreSQL for database operations.
 
-Do not place demo credentials, signing secrets, Supabase keys, or service-role keys in Vercel variables, `VITE_*` settings, source files, or GitHub. `.gitignore` rules exclude environment files, key files, local JSON state, and service-role-key-named files; only blank-value `.env.example` templates are tracked. This repository is prepared for deployment but has not been deployed; account, domain, and credential setup must be completed by the project owner.
+Database credentials are configured server-side and must not be committed to the repository.
 
-See [APPROACH.md](./APPROACH.md) for the short solution note and demo checklist.
+### Security Considerations
+
+The current implementation uses a shared demo login. It is intended for assessment demonstration and not as a complete production authentication system.
+
+Before production use, the application should have individual user accounts, role-based permissions, audit logging, stronger database transaction handling, and appropriate access policies.
+
+## Future Improvements
+
+- Individual authentication and role-based access.
+- Manager and pod-lead dashboards.
+- Automated leave approval workflows.
+- Advanced workload balancing.
+- Improved scheduling optimization.
+- Roster history and audit logs.
+- Notifications for staffing gaps.
+- Background processing for large roster-generation jobs.
+- More extensive performance and integration testing.
+
+## Author
+
+**Parth Patil**
+
+BSc Information Technology Student
+
+- **GitHub:** https://github.com/pp2608
+- **LinkedIn:** https://www.linkedin.com/in/parth-patil-b54031348/
+- **Portfolio:** https://parthpatilportfolio.netlify.app
+
+---
+
+*RosterOS — Smart Workforce and Roster Management System | DataStraw Internship Assessment*
