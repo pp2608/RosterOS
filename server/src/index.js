@@ -425,9 +425,10 @@ function validateRecord(collection, record, exceptId) {
 
     if (
         collection === 'holidays' &&
-        (!validDate(record.date) || !record.name ?.trim())
+        (!validDate(record.date) || !record.name ?.trim() ||
+            !(record.scope === undefined || record.scope === 'all' || state.brands.some(brand => brand.id === record.scope)))
     ) {
-        return 'Holiday name and a valid date are required.';
+        return 'Holiday requires a valid date, name, and scope (all employees or an existing brand).';
     }
 
     return '';
@@ -501,11 +502,12 @@ for (const collection of collections) {
         if (
             collection === 'holidays' &&
             (!/^\d{4}-\d{2}-\d{2}$/.test(body.date || '') ||
-                !body.name ?.trim()
+                !body.name ?.trim() ||
+                !(body.scope === undefined || body.scope === 'all' || state.brands.some(brand => brand.id === body.scope))
             )
         ) {
             return res.status(400).json({
-                error: 'Holiday name and date are required.'
+                error: 'Holiday requires a valid date, name, and scope (all employees or an existing brand).'
             });
         }
 
@@ -532,7 +534,8 @@ for (const collection of collections) {
                 holidayPolicy: 'closed',
                 minStaff: 1
             } :
-            collection === 'pods' ? { lead: null } : {};
+            collection === 'pods' ? { lead: null } :
+            collection === 'holidays' ? { scope: 'all' } : {};
 
         const record = {
             active: true,

@@ -76,3 +76,11 @@ test('public holidays and pod assignment controls accept configured records',asy
   const pod=initial.pods[1];const updated=await call(`/pods/${pod.id}`,{method:'PATCH',body:JSON.stringify({name:'Orbit Operations'})});assert.equal(updated.data.name,'Orbit Operations');
   const now=(await call('/bootstrap')).data;assert.equal(now.holidays.some(h=>h.name==='Test Observance'),true);
 });
+
+test('holiday creation defaults to all brands and rejects unknown scopes',async()=>{
+  const created=await call('/holidays',{method:'POST',body:JSON.stringify({date:'2026-11-06',name:'Default Scope Holiday'})});
+  assert.equal(created.response.status,201);
+  assert.equal(created.data.scope,'all');
+  const invalid=await call('/holidays',{method:'POST',body:JSON.stringify({date:'2026-11-07',name:'Unknown Scope Holiday',scope:'missing-brand'})});
+  assert.equal(invalid.response.status,400);
+});

@@ -107,11 +107,18 @@ function inspectEntries(roster, state) {
       continue;
     }
 
-    const firstByProcess = new Map();
+    const entriesByProcess = new Map();
     for (const entry of group) {
-      const prior = firstByProcess.get(entry.processId);
-      if (prior) {
-        invalid.add(entry);
+      const sameProcess = entriesByProcess.get(entry.processId) || [];
+      sameProcess.push(entry);
+      entriesByProcess.set(entry.processId, sameProcess);
+    }
+    for (const sameProcess of entriesByProcess.values()) {
+      if (sameProcess.length < 2) continue;
+      for (const [index, entry] of sameProcess.entries()) {
+        // Preserve one canonical row for coverage while flagging every row in
+        // the duplicate group. Extra rows cannot inflate staffing counts.
+        if (index > 0) invalid.add(entry);
         add({
           id: 'duplicate:' + entry.id,
           entryId: entry.id,
@@ -123,8 +130,6 @@ function inspectEntries(roster, state) {
           employeeId: entry.employeeId,
           message: 'Employee has a duplicate assignment to the same process on ' + entry.date + '.',
         });
-      } else {
-        firstByProcess.set(entry.processId, entry);
       }
     }
   }

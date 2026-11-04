@@ -248,6 +248,17 @@ test('Validation accepts same-brand multi-process work and rejects duplicate sam
   assert.equal(roster.conflicts.some(c=>c.id==='duplicate:c'),true);
 });
 
+test('Validation marks every row in a duplicate same-process assignment invalid',()=>{
+  const state={employees:[employee('e1',['b1'],['cs'])],brands:[brand('b1',['cs'])],processes:[process('cs')],holidays:[],availability:[]};
+  const roster={month:'2026-11',entries:[
+    {id:'first',date,brandId:'b1',processId:'cs',employeeId:'e1'},
+    {id:'second',date,brandId:'b1',processId:'cs',employeeId:'e1'},
+  ]};
+  const result=validateRoster(roster,state);
+  assert.deepEqual(result.conflicts.filter(conflict=>conflict.id.startsWith('duplicate:')).map(conflict=>conflict.entryId).sort(),['first','second']);
+  assert.equal(calculateCoverage(roster,state).fulfilledSlots,2);
+});
+
 test('48-person sample preserves the approved ownership and relief fixture',()=>{
   const sample=require('../src/data');
   assert.equal(sample.employees.length,48);
