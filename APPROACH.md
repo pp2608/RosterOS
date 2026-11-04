@@ -1,17 +1,80 @@
-# RosterOS approach note
+# RosterOS — Approach Note
 
-RosterOS treats a roster as a set of daily brand/process assignments with explicit coverage requirements. The API runs a deterministic scheduler: hard availability and calendar rules are applied first, then soft preferences influence tie-breaking. The engine validates at both the process and brand level and returns explainable conflicts when staffing is insufficient. Managers retain control over setup, leave approvals, manual reassignment, and final conflict review.
+RosterOS is a Smart Workforce and Roster Management System developed for the DataStraw internship assessment.
 
-The model uses normalized employee, brand, process, pod, availability, and roster relationships in Supabase. For local development and assessment review, the API persists the same domain data to a local JSON file without requiring credentials. The client provides the operational views, editing tools, monthly schedule grid, and CSV export.
+The system treats a roster as a collection of daily brand and process assignments with explicit staffing requirements.
 
-## 3–5 minute demo checklist
+The backend uses a deterministic scheduling algorithm. Hard availability and calendar rules are applied first, while employee preferences influence candidate selection. The scheduler validates staffing at both process and brand levels and reports explainable conflicts when requirements cannot be fulfilled.
 
-1. Show the 32-person, multi-brand and pod dashboard and availability snapshot.
-2. Open Operations setup to show different calendars, brand staffing minimums, process requirements, and pod leads.
-3. Generate a month and inspect the monthly work/off/leave grid.
-4. Filter the roster by brand or process and inspect critical gap explanations.
-5. Edit an employee weekly off or approve/add leave, then revalidate an existing roster.
-6. Manually reassign one scheduled employee and show the resulting validation status.
-7. Export the filtered month to CSV.
+Managers retain control over employee setup, leave approvals, manual reassignment, and final conflict resolution.
 
-Do not describe this as publicly deployed until hosting and URL checks have actually been completed.
+## Technical Approach
+
+The application follows a client-server architecture:
+
+- **Frontend:** React and Vite provide the workforce management interface.
+- **Backend:** Node.js and Express handle APIs, scheduling, and validation.
+- **Database:** Supabase PostgreSQL stores employee, brand, process, pod, availability, and roster relationships.
+- **Scheduling:** A deterministic rule-based engine generates and validates monthly rosters.
+- **Deployment:** Vercel hosts the frontend and Render hosts the backend API.
+
+Local development can use a JSON file for persistence without requiring Supabase credentials.
+
+## Scheduling Approach
+
+For each date in a selected month, the scheduler:
+
+1. Checks brand and process operating calendars.
+2. Identifies eligible employees based on brand and process assignments.
+3. Excludes employees on weekly offs, approved leave, or comp-off.
+4. Allocates employees according to staffing requirements.
+5. Prevents an employee from working across different brands on the same day.
+6. Checks process-level and brand-level staffing requirements.
+7. Reports critical staffing gaps and advisory preference conflicts.
+
+The system does not silently mark incomplete rosters as valid. Managers can review conflicts, make manual changes, and validate the roster again.
+
+## Current Application Structure
+
+The live application currently manages:
+
+- 48 employees
+- 24 brands
+- 4 processes
+- 5 operational pods
+
+## Human Control and Automation
+
+Roster generation and validation are automated. Managers remain responsible for configuring business rules, approving leave, making manual changes, and deciding how to resolve staffing conflicts.
+
+This approach combines scheduling automation with human oversight.
+
+## Future Improvements
+
+With another week of development, I would prioritize:
+
+- Individual authentication and role-based access.
+- Manager and pod-lead permissions.
+- Atomic database transactions.
+- Roster change history and audit logs.
+- Improved scheduling performance.
+- Additional integration and scalability testing.
+
+## 3–5 Minute Demo Checklist
+
+1. Show the dashboard with employee, brand, process, and pod statistics.
+2. Open People to demonstrate employee management.
+3. Open Operations to show brand calendars and staffing requirements.
+4. Show Availability, weekly offs, leave, and holidays.
+5. Open the roster and demonstrate the monthly schedule.
+6. Show validation results and explain critical staffing gaps.
+7. Demonstrate manual reassignment and revalidation.
+8. Export the roster to CSV.
+
+## Live Deployment
+
+- **Frontend:** https://roster-os-eight.vercel.app
+- **Backend API:** https://rosteros-assessment-api.onrender.com
+- **GitHub:** https://github.com/pp2608/RosterOS
+
+The live application is connected to Supabase PostgreSQL.
